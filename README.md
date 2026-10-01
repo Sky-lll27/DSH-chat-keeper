@@ -1,7 +1,10 @@
-# dsh-conversation-manager
+# DSH-conversation-manager
 
-[![CI](https://github.com/Sky-lll27/dsh-conversation-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/Sky-lll27/dsh-conversation-manager/actions/workflows/ci.yml)
+[![CI](https://github.com/Sky-lll27/DSH-conversation-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/Sky-lll27/DSH-conversation-manager/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+> 仓库名是 `DSH-conversation-manager`；**npm 包名必须全小写**，所以包名是
+> `dsh-conversation-manager` —— 两者指同一个插件。
 
 一个真正接入 **DeepSeek Harness（DSH）** 插件体系的对话管理器。它补齐了 DSH 界面缺失的那部分：
 **跨工作区盘点**、**批量处理**，以及 DSH 本身没有的 —— **删除对话（回收站式，可恢复）**。

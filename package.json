@@ -13,11 +13,11 @@
   "author": "Sky-lll27",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Sky-lll27/dsh-conversation-manager.git"
+    "url": "git+https://github.com/Sky-lll27/DSH-conversation-manager.git"
   },
-  "homepage": "https://github.com/Sky-lll27/dsh-conversation-manager#readme",
+  "homepage": "https://github.com/Sky-lll27/DSH-conversation-manager#readme",
   "bugs": {
-    "url": "https://github.com/Sky-lll27/dsh-conversation-manager/issues"
+    "url": "https://github.com/Sky-lll27/DSH-conversation-manager/issues"
   },
   "main": "index.js",
   "exports": {
