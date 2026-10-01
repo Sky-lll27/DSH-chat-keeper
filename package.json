@@ -65,7 +65,8 @@
     "verify:client": "node scripts/verify-client.mjs",
     "smoke:client": "node scripts/smoke-client.mjs",
     "check:client": "node scripts/verify-client.mjs && node scripts/smoke-client.mjs",
-    "prepare": "tsdown"
+    "check:dist": "tsdown && git diff --exit-code -- dist/client.js dist/client.js.map",
+    "prepack": "tsdown"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4"

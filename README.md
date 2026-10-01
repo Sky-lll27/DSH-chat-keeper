@@ -32,32 +32,44 @@ DSH 自带的侧栏已经能搜索、置顶、改名、分叉、归档 —— �
 
 ## 安装
 
-### 方式一：作为组合包安装（推荐）
+### 方式一：从 GitHub 装（推荐给"我只是想用"）
 
-在 DSH 的**插件**页面里安装本目录的绝对路径，或：
+在 DSH 的**插件**页面里安装本仓库地址：
 
-```sh
-dsh plugin --profile <你的 profile> add /path/to/this/repo
+```
+https://github.com/Sky-lll27/DSH-conversation-manager
 ```
 
-本包声明了 `dsh.bundle`，因此会被当作**组合包**（而不是普通依赖）追加进
-`dsh.profile.bundles`，插件页随即能看到它的开关与卸载按钮。本地路径安装是 `link:`，
-所以**安装前需要先构建一次浏览器半**：
+或在命令行：
 
 ```sh
-pnpm install     # prepare 会自动跑 tsdown，产出 dist/client.js
+dsh plugin --profile <你的 profile> add https://github.com/Sky-lll27/DSH-conversation-manager
 ```
 
 装好后**重启 DSH**（宿主插件树在启动时装配）。
 
-### 方式二：开发期用 `--patch` 直接挂载
+> **不需要构建**：浏览器半的产物（`dist/client.js`）随仓库一起提供。
+> 这一点是刻意的——pnpm 11 会拦住 git 依赖的**安装期**构建脚本
+> （`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），要么让使用者去批准构建，要么干脆不构建。
+> 所以本项目把产物入库，构建只在 `prepack`（打包发布）与手动 `pnpm run bundle` 时发生；
+> CI 会校验"提交的产物 == 重新构建的产物"，防止两边漂移。
+
+### 方式二：从本地目录装
+
+在插件页面里安装本目录的**绝对路径**（例如 `<本仓库目录>`）。
+同样是 `link:`，同样不需要构建（产物已在仓库里）。
+
+本包声明了 `dsh.bundle`，因此会被当作**组合包**（而不是普通依赖）追加进
+`dsh.profile.bundles`，插件页随即能看到它的开关与卸载按钮。
+
+### 方式三：开发期用 `--patch` 直接挂载
 
 ```sh
 cd /path/to/this/repo && pnpm install && pnpm run bundle
 pnpm dsh web --patch /path/to/this/repo/patch.local.yml
 ```
 
-适合边改边验：不需要安装成组合包。
+适合边改边验：不需要安装成组合包。**改了浏览器半的代码记得 `pnpm run bundle`**。
 
 ### 卸载
 
@@ -167,7 +179,7 @@ src/client/              浏览器半（TypeScript + React）
   manager.tsx            总表面板
   locale.ts              中英字典
   styles.ts              主题自适应样式
-dist/client.js           浏览器半构建产物（由 tsdown 生成）
+dist/client.js           浏览器半产物（**提交进仓库**，所以安装时无需构建）
 scripts/                 产物契约校验与冒烟（verify-client / smoke-client）
 test/smoke.mjs           宿主半冒烟（伪造 Cordis 上下文，无需 DSH）
 docs/ENGINEERING-NOTES.md 工程笔记：契约核对、实测数据、踩过的坑
@@ -181,17 +193,20 @@ docs/ENGINEERING-NOTES.md 工程笔记：契约核对、实测数据、踩过的
 pnpm install
 pnpm run check          # 语法检查
 pnpm test               # 宿主半冒烟：50 项
-pnpm run bundle         # 构建浏览器半
+pnpm run bundle         # 构建浏览器半（改了 src/client/ 才需要）
 pnpm run check:client   # 产物契约 + 纯度门 + 冒烟：43 项
+pnpm run check:dist     # 重新构建后检查产物与提交的一致（CI 会跑）
 ```
 
-其中两条值得一提的断言：
+其中三条值得一提的断言：
 
 - **纯度门**：浏览器半的产物只能依赖平台模块表里的东西（`react`、`react/jsx-runtime`、
   `@deepseek-ai/dsh-client-ui-*` 等）；任何其它 `@deepseek-ai/*` 的**运行时**值导入都会
   让构建失败（类型导入请用 `import type`）。
 - **跨两半一致性**：回收站镜像的路径常量在宿主半与浏览器半各有一份（两半各自打包，
   无法共享模块），测试会断言宿主声明的路径确实出现在客户端产物里。
+- **产物不许漂移**：`dist/client.js` 是入库的构建物，`pnpm run check:dist` 会重新构建一次
+  并要求工作区无差异——改了源码忘了重新构建，CI 就会失败。
 
 ## 已知限制
 

@@ -1,7 +1,14 @@
 node_modules/
-dist/
 *.tgz
 .plugin-manager/
 *.log
 .DS_Store
 Thumbs.db
+
+# dist/ 里的浏览器半产物**是提交进仓库的**：
+# 别人从 git 安装时（DSH 插件页 / dsh plugin add <git-url>）不该被要求批准构建脚本，
+# 而 pnpm 11 会拦住 git 依赖的安装期脚本。因此这里改用 prepack（只在打包时构建），
+# 并把产物入库；CI 会校验"提交的产物 == 重新构建的产物"，防止两边漂移。
+dist/*
+!dist/client.js
+!dist/client.js.map

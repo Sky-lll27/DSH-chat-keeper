@@ -37,3 +37,8 @@ jobs:
       # check:client = 产物契约 + 平台模块纯度门 + 契约冒烟
       - name: 浏览器半契约与纯度
         run: pnpm run check:client
+
+      # dist/ 是提交进仓库的（这样从 git 安装无需构建审批），
+      # 因此必须防止它与源码漂移：重新构建后若与提交的产物有差异，这一步会失败。
+      - name: 提交的产物与重新构建一致
+        run: pnpm run check:dist
