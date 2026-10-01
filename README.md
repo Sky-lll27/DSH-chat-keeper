@@ -1,6 +1,6 @@
 # dsh-conversation-manager
 
-[![tests](https://img.shields.io/badge/tests-50%20%2B%2043%20passing-brightgreen)](#开发与验证)
+[![CI](https://github.com/Sky-lll27/dsh-conversation-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/Sky-lll27/dsh-conversation-manager/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 一个真正接入 **DeepSeek Harness（DSH）** 插件体系的对话管理器。它补齐了 DSH 界面缺失的那部分：

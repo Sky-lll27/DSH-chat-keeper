@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试（宿主半 + 浏览器半）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile 保证与本地锁文件一致；安装后 prepare 会自动构建浏览器半。
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 语法检查
+        run: pnpm run check
+
+      - name: 宿主半冒烟
+        run: pnpm test
+
+      # check:client = 产物契约 + 平台模块纯度门 + 契约冒烟
+      - name: 浏览器半契约与纯度
+        run: pnpm run check:client
