@@ -11,7 +11,7 @@
 
 | 半 | 文件 | 作用 |
 | --- | --- | --- |
-| **宿主半** | `index.js` + `lib/` | 11 个模型可调用工具（含**磁盘层面的删除 / 回收站 / 恢复**）、会话索引、`conversationManager` 服务（纯 JS，无需构建） |
+| **宿主半** | `index.js` + `lib/` | 12 个模型可调用工具（含**磁盘层面的删除 / 回收站 / 恢复 / 清空**）、会话索引、`conversationManager` 服务（纯 JS，无需构建） |
 | **浏览器半** | `src/client/` → `dist/client.js` | Web GUI 里的「对话管理器」页签 + 会话行菜单项（TypeScript + React，需构建） |
 
 ## 安装状态（开发机实测）
@@ -111,7 +111,7 @@ dsh-conversation-manager/
 ├── lib/
 │   ├── events.js         # 会话日志读取 + 事件→可读消息投影（纯函数）
 │   ├── conversations.js  # 对话索引：登记、增量计数、检索、统计、快照
-│   ├── tools.js          # 11 个 ToolDefinition（含删除/恢复）
+│   ├── tools.js          # 12 个 ToolDefinition（含删除/恢复/清空）
 │   ├── cleanup.js        # 磁盘层面的列出 / 回收站 / 恢复（纯函数）
 │   └── trash-mirror.js   # 把回收站概览写进会话工作区（供 Web 面板显示）
 ├── src/client/           # 浏览器半源码（TypeScript + React）

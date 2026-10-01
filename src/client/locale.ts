@@ -122,6 +122,9 @@ export const en: LocaleDictOf<typeof NS> = {
   pasteHint: 'Paste it into the input box and send.',
   copiedDeleteHint: 'Copied the delete instruction for {count} conversation(s).',
   copiedRestoreHint: 'Copied the restore instruction.',
+  purgeBin: 'Empty recycle bin',
+  purgeHint: 'Permanently erases every batch — this cannot be undone.',
+  copiedPurgeHint: 'Copied the instruction to permanently erase {count} batch(es).',
   copyFailed: 'Could not access the clipboard — select the text manually.',
 }
 
@@ -179,5 +182,8 @@ export const zh: LocaleDictOf<typeof NS> = {
   pasteHint: '粘贴到输入框发送。',
   copiedDeleteHint: '已复制 {count} 个对话的删除指令。',
   copiedRestoreHint: '已复制恢复指令。',
+  purgeBin: '清空回收站',
+  purgeHint: '永久删除全部批次——不可恢复。',
+  copiedPurgeHint: '已复制清空指令（{count} 批，永久删除、不可恢复）。',
   copyFailed: '无法访问剪贴板，请手动选择文本。',
 }

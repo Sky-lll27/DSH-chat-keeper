@@ -417,6 +417,17 @@ export function ManagerBody(props: ManagerProps) {
     showNotice(ok ? t('copiedRestoreHint') : t('copyFailed'))
   }
 
+  /** 清空回收站：不可恢复，所以指令里写明这一点，并带上当前批次数便于核对。 */
+  const copyPurgeInstruction = async () => {
+    const batches = trash?.count ?? 0
+    const text = [
+      `请用 conversation_purge 清空回收站（all: true, confirm: true），当前 ${batches} 批。`,
+      '这会永久删除，无法恢复。',
+    ].join('\n')
+    const ok = await copyText(text)
+    showNotice(ok ? t('copiedPurgeHint', { count: batches }) : t('copyFailed'))
+  }
+
   const selectedCount = selected.size
   const allChecked = rows.length > 0 && selectedCount === rows.length
 
@@ -551,6 +562,13 @@ export function ManagerBody(props: ManagerProps) {
           </button>
           <button className="dshm-btn" onClick={() => { void copyRestoreInstruction() }}>
             {t('restore')}
+          </button>
+          <button
+            className="dshm-btn dshm-btn--danger"
+            title={t('purgeHint')}
+            onClick={() => { void copyPurgeInstruction() }}
+          >
+            {t('purgeBin')}
           </button>
           <span className="dshm-hint dshm-hint--inline">{t('pasteHint')}</span>
         </div>

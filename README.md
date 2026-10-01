@@ -1,6 +1,6 @@
 # dsh-conversation-manager
 
-[![tests](https://img.shields.io/badge/tests-44%20%2B%2043%20passing-brightgreen)](#开发与验证)
+[![tests](https://img.shields.io/badge/tests-50%20%2B%2043%20passing-brightgreen)](#开发与验证)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 一个真正接入 **DeepSeek Harness（DSH）** 插件体系的对话管理器。它补齐了 DSH 界面缺失的那部分：
@@ -24,7 +24,7 @@ DSH 自带的侧栏已经能搜索、置顶、改名、分叉、归档 —— �
 
 | 半 | 文件 | 作用 |
 | --- | --- | --- |
-| **宿主半** | `index.js` + `lib/` | 11 个模型可调用工具、会话索引、`conversationManager` 服务（纯 JS，无需构建） |
+| **宿主半** | `index.js` + `lib/` | 12 个模型可调用工具、会话索引、`conversationManager` 服务（纯 JS，无需构建） |
 | **浏览器半** | `src/client/` → `dist/client.js` | Web GUI 的「对话管理器」页签 + 会话行菜单项（TypeScript + React） |
 
 ## 安装
@@ -90,7 +90,7 @@ pnpm dsh web --patch /path/to/this/repo/patch.local.yml
 
 ## 模型可调用的工具
 
-宿主半注册 11 个工具，随对话直接被模型调用：
+宿主半注册 12 个工具，随对话直接被模型调用：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -105,6 +105,7 @@ pnpm dsh web --patch /path/to/this/repo/patch.local.yml
 | `conversation_list_all` | **从磁盘**列出全部对话（含未装载的），带标题、首句话、工作区、大小、磁盘路径 |
 | `conversation_delete` | **删除**：默认进回收站（可恢复），`permanent:true` 才真删；必须 `confirm:true` |
 | `conversation_restore` | 从回收站原样恢复（默认最新一批）；原位置被占用时跳过而不覆盖 |
+| `conversation_purge` | **清空回收站**：永久删除批次（`all:true` 清全部，或 `batch:"<批次名>"` 删一批），必须 `confirm:true`。**不可恢复** |
 
 ## 删除的三条安全底线
 
@@ -113,8 +114,13 @@ pnpm dsh web --patch /path/to/this/repo/patch.local.yml
 | **默认是移动而不是粉碎** | 进 `$DSH_HOME/session-trash/<批次>/`，`MANIFEST.json` 记着每条对话的原始位置，`conversation_restore` 可原样搬回 |
 | **必须显式确认** | 少了 `confirm:true` 一律拒绝，原目录纹丝不动 |
 | **拒绝删除正在运行的对话** | 本进程存活的会话会被列进 `refusedLive` 而不是删掉（也意味着不可能删掉你正在说话的那个） |
+| **清空回收站是独立的、不可恢复的一步** | `conversation_purge` 同样要求 `confirm:true`，只接受回收站里实际存在的批次名（并对最终路径做包含性校验，不会被 `..` 带出回收站） |
 
 回收站与 `sessions` 同级、同卷，所以移动是同卷 `rename`：要么完整、要么没动。
+
+**回收站怎么清空**：面板底部有「清空回收站」（同样以"复制指令"方式交付），
+或直接对模型说「清空回收站」。`conversation_purge` 清完之后，连空的回收站目录也会一并收掉；
+恢复完一个批次后，那个只剩清单的空壳批次也会自动消失，不会在面板里显示成一个"空批次"。
 
 被删对话涉及的两处磁盘位置：
 
@@ -150,7 +156,7 @@ index.js                 宿主插件入口（会话索引 + 事件追踪 + 工�
 lib/
   conversations.js       对话索引：登记、增量计数、检索、统计、快照
   events.js              会话事件 → 消息投影（含多帧 zstd 日志读取）
-  tools.js               11 个 ToolDefinition
+  tools.js               12 个 ToolDefinition
   cleanup.js             磁盘层面的列出 / 回收站 / 恢复（纯函数）
   trash-mirror.js        把回收站概览写进会话工作区（供 Web 面板显示）
 src/client/              浏览器半（TypeScript + React）
@@ -171,7 +177,7 @@ docs/ENGINEERING-NOTES.md 工程笔记：契约核对、实测数据、踩过的
 ```sh
 pnpm install
 pnpm run check          # 语法检查
-pnpm test               # 宿主半冒烟：44 项
+pnpm test               # 宿主半冒烟：50 项
 pnpm run bundle         # 构建浏览器半
 pnpm run check:client   # 产物契约 + 纯度门 + 冒烟：43 项
 ```

@@ -212,8 +212,9 @@ const expectedTools = [
   'conversation_list_all',
   'conversation_delete',
   'conversation_restore',
+  'conversation_purge',
 ]
-check('十一个工具全部注册', () => {
+check('十二个工具全部注册', () => {
   for (const toolName of expectedTools) assert.ok(harness.tools.has(toolName), `缺少 ${toolName}`)
 })
 // 两半各自打包、无法共享模块，镜像路径在两处各写一份；这里用产物做交叉验证，
@@ -387,7 +388,7 @@ check('conversation_fork 派生新会话并登记', () => {
 const selftest = await run('conversation_selftest')
 check('conversation_selftest 与真实宿主形态对账', () => {
   assert.equal(selftest.plugin.name, 'conversation-manager')
-  assert.equal(selftest.plugin.registeredTools.length, 11)
+  assert.equal(selftest.plugin.registeredTools.length, 12)
   assert.equal(selftest.services.managerExposedVia, 'provide')
   assert.equal(selftest.services.sessionsFork, 'function')
   assert.equal(selftest.tracking.handlersFired['session/event'], 3)
@@ -554,6 +555,7 @@ const fixture = [
   { id: 'session-1', ws: '--F--', title: '存活会话（不该被删）', first: '我在运行中', size: 128 },
   { id: 'old-a', ws: '--F--', title: '旧对话 A', first: '第一条消息 A', size: 256 },
   { id: 'old-b', ws: '--G--', title: '旧对话 B', first: '第一条消息 B', size: 64 },
+  { id: 'old-c', ws: '--F--', title: '旧对话 C', first: '第一条消息 C', size: 96 },
 ]
 for (const entry of fixture) {
   const dir = join(home, 'sessions', entry.ws, entry.id)
@@ -583,8 +585,8 @@ const runClean = (toolName, args = {}) => cleaner.tools.get(toolName).execute(ar
 
 const all = await runClean('conversation_list_all', {})
 check('conversation_list_all 从磁盘列出全部对话（含标题与路径）', () => {
-  assert.equal(all.total, 3, JSON.stringify(all).slice(0, 300))
-  assert.deepEqual(all.conversations.map(row => row.id).sort(), ['old-a', 'old-b', 'session-1'])
+  assert.equal(all.total, 4, JSON.stringify(all).slice(0, 300))
+  assert.deepEqual(all.conversations.map(row => row.id).sort(), ['old-a', 'old-b', 'old-c', 'session-1'])
   const row = all.conversations.find(candidate => candidate.id === 'old-a')
   assert.equal(row.title, '旧对话 A')
   assert.equal(row.workspace, 'F:\\demo')
@@ -657,6 +659,51 @@ check('permanent:true 才真删', () => {
   assert.ok(!existsSync(join(home, 'sessions', '--G--', 'old-b')))
 })
 
+/* ── 清空回收站：先造一个新批次，再验证三道安全措施 ── */
+// 恢复测试已把两批清空；这里再造出内容，供「清空回收站」验证。
+// 注意批次名精确到秒：两次删除若落在同一秒，会复用同一个批次目录，
+// 因此后面的断言只依赖"释放的对话总数"，不依赖批次数。
+const purgeTarget1 = await runClean('conversation_delete', { session_ids: ['old-a'], confirm: true })
+check('清空测试的准备：再删两个对话', () => {
+  assert.equal(purgeTarget1.deleted.length, 1)
+  assert.equal(purgeTarget1.recycleBin.split(/[\\/]/).pop(), purgeTarget1.batch)
+})
+
+const purgeTarget2 = await runClean('conversation_delete', { session_ids: ['old-c'], confirm: true })
+check('清空测试的准备：第二个对话也已入回收站', () => {
+  assert.equal(purgeTarget2.deleted.length, 1)
+  assert.ok(purgeTarget2.recycleBin.startsWith(home), '回收站应位于本夹具的 DSH_HOME 下')
+})
+
+const purgeNoConfirm = await runClean('conversation_purge', { all: true })
+check('清空回收站必须 confirm:true', () => {
+  assert.equal(purgeNoConfirm.refused, true)
+  assert.ok(existsSync(purgeTarget1.recycleBin), '没有确认时批次必须还在')
+})
+
+const noTarget = await runClean('conversation_purge', { confirm: true })
+check('不指定 all/batch 时拒绝执行并报出可选批次', () => {
+  assert.ok(typeof noTarget.error === 'string')
+  assert.ok(Array.isArray(noTarget.available) && noTarget.available.length >= 1)
+})
+
+const bogus = await runClean('conversation_purge', { batch: '../..', confirm: true })
+check('批次名不在回收站里时拒绝（不做路径拼接删除）', () => {
+  assert.equal(bogus.purged.length, 0)
+  assert.ok(existsSync(join(home, 'sessions')), '仓库外/上级目录绝不能被删到')
+})
+
+const emptied = await runClean('conversation_purge', { all: true, confirm: true })
+check('all:true 清空全部批次并报出释放空间', () => {
+  // 批次名精确到秒，同一秒内的多次删除会落进同一个批次，
+  // 所以断言"释放的对话总数"而非批次数——批次数取决于运行速度。
+  const freed = emptied.purged.reduce((sum, entry) => sum + (entry.entries ?? 0), 0)
+  assert.equal(freed, 2, JSON.stringify(emptied).slice(0, 300))
+  assert.ok(emptied.freedKB > 0, `应报出释放的空间，实际 ${emptied.freedKB}`)
+  assert.equal(emptied.recycleBin.length, 0)
+  assert.ok(!existsSync(join(home, 'session-trash')), '清空后回收站空壳目录也应被收掉')
+})
+
 cleaner.disposeAll()
 if (previousHome === undefined) delete process.env.DSH_HOME
 else process.env.DSH_HOME = previousHome
@@ -665,7 +712,7 @@ rmSync(home, { recursive: true, force: true })
 // ── 7. 卸载即可逆效果 ───────────────────────────────────────────────────────
 console.log('\n卸载与回收')
 check('卸载后所有工具被回收（注册即可逆效果）', () => {
-  assert.equal(harness.tools.size, 11, '卸载前应当是 11 个工具')
+  assert.equal(harness.tools.size, 12, '卸载前应当是 12 个工具')
   harness.disposeAll()
   assert.equal(harness.tools.size, 0, '卸载后工具表应当清空')
 })
