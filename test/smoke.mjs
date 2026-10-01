@@ -218,9 +218,14 @@ check('十一个工具全部注册', () => {
 })
 // 两半各自打包、无法共享模块，镜像路径在两处各写一份；这里用产物做交叉验证，
 // 免得改了宿主常量却忘了客户端（面板会静默读不到回收站）。
+// 产物是构建物（dist/ 不入库），所以刚克隆下来还没构建时**跳过而不是失败**——
+// 需要硬性检查产物时用 `pnpm run verify:client` / `pnpm run check:client`。
 check('回收站镜像路径在两半之间一致', () => {
   const bundlePath = join(rootDir, 'dist', 'client.js')
-  assert.ok(existsSync(bundlePath), `客户端产物不存在：${bundlePath}（先跑 pnpm run bundle）`)
+  if (!existsSync(bundlePath)) {
+    console.log('    ↷ 跳过：还没有 dist/client.js（先跑 pnpm run bundle 再做这条跨两半校验）')
+    return
+  }
   const bundle = readFileSync(bundlePath, 'utf8')
   assert.ok(
     bundle.includes(MIRROR_RELATIVE_PATH),
