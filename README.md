@@ -234,6 +234,18 @@ pnpm run check:dist     # 重新构建后检查产物与提交的一致（CI 会
 顺带一提：如果链接目标所在仓库里存在 `node_modules`（例如开发者刚跑过 `pnpm install`），
 这个导入步骤更容易踩到它——消费者从 git 安装时不存在这个问题。
 
+**另外两个实测踩到的坑（Windows 上从 git 安装时）**
+
+- **不要用 `git+https://…` 这种带前缀的写法**：pnpm 会把 GitHub 的 `git+https` 地址规范化成 ssh
+  （`git+ssh://git@github.com/…`），没配 SSH 密钥就会失败（`git ls-remote ... exit 128`）。
+  用**不带前缀的普通 https 地址**即可：
+  `https://github.com/Sky-lll27/DSH-conversation-manager.git`
+- **已经用本地目录装过、想改成 git 版时，先卸载再装**：本地目录安装是 `link:`
+  （Windows 上是目录联接 junction），pnpm 试图"原地改名替换"会被系统拒绝
+  （`EPERM ... rename ... _tmp_… -> dsh-conversation-manager`）。
+  先在插件页卸载（或 `pnpm remove` 掉那条依赖），再装 git 版。
+  顺手提示：拆目录联接要用 `rmdir`（只删联接本身），**不要**用递归删除，否则会连带删掉目标目录里的文件。
+
 ## 关于作者与 AI 协作
 
 本项目的**需求、设计取舍、验收与发布由作者（Sky-lll27）决定**；**代码由作者与 AI 助手
