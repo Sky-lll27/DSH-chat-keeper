@@ -1,0 +1,82 @@
+{
+  "name": "dsh-conversation-manager",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "DeepSeek Harness 对话管理器：跨工作区总表、检索、置顶、归档、批量操作，以及 DSH 界面没有的磁盘层面删除（回收站式，可恢复）。",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "conversation-manager",
+    "session-cleanup"
+  ],
+  "author": "Sky-lll27",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sky-lll27/dsh-conversation-manager.git"
+  },
+  "homepage": "https://github.com/Sky-lll27/dsh-conversation-manager#readme",
+  "bugs": {
+    "url": "https://github.com/Sky-lll27/dsh-conversation-manager/issues"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": {
+      "default": "./dist/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "dist/client.js",
+    "dist/client.js.map",
+    "scripts/verify-client.mjs",
+    "scripts/smoke-client.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-api-workspace-files",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check lib/events.js && node --check lib/conversations.js && node --check lib/tools.js && node --check lib/cleanup.js && node --check lib/trash-mirror.js",
+    "test": "node test/smoke.mjs",
+    "bundle": "tsdown",
+    "watch": "tsdown --watch",
+    "verify:client": "node scripts/verify-client.mjs",
+    "smoke:client": "node scripts/smoke-client.mjs",
+    "check:client": "node scripts/verify-client.mjs && node scripts/smoke-client.mjs",
+    "prepare": "tsdown"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@types/node": "latest",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0",
+    "tsdown": "latest",
+    "typescript": "latest"
+  },
+  "license": "MIT"
+}

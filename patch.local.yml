@@ -1,0 +1,19 @@
+# 开发期覆盖层（`--patch`）：用绝对路径直接挂载宿主半，不必安装成组合包。
+#
+# 用途：改代码后不必走「组合包安装 → 重启」，适合一边写一边验。
+# 用法（把 /path/to/this/repo 换成你本仓库的绝对路径）：
+#   cd /path/to/this/repo && pnpm install && pnpm run bundle   # 先出 dist/client.js
+#   pnpm dsh web --patch /path/to/this/repo/patch.local.yml
+#
+# 客户端半怎么被带上：宿主 clientModules 会扫描 Loader 的 entry，按「最近归属的 package.json」
+# 认包身份——本目录的 package.json 声明了 dsh.client 与 exports['./client']，
+# 所以哪怕这一行是按 .js 绝对路径挂的，浏览器半（dist/client.js）照样会进 Web 启动图。
+# 前提是那个文件已经构建出来，否则 GUI 里不会出现「对话管理器」页签。
+#
+# 想开启索引持久化时，把 config 段一起放开（路径按需修改）。
+- insert:
+    - id: conversation-manager
+      name: '/path/to/this/repo/index.js'
+      # config:
+      #   maxTracked: 500
+      #   persistPath: '<DSH_HOME>/conversation-manager/index.json'
