@@ -28,6 +28,15 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # 失败排查用：把实际运行时与磁盘情况打在日志里（Node 小版本会影响 node:zlib 的 zstd 可用性）。
+      - name: 环境信息
+        run: |
+          node -v
+          pnpm -v
+          node -e "const z=require('node:zlib');console.log('zstd:',typeof z.zstdDecompressSync,typeof z.zstdCompressSync)"
+          uname -a
+          df -h /
+
       - name: 语法检查
         run: pnpm run check
 
@@ -35,10 +44,13 @@ jobs:
         run: pnpm test
 
       # check:client = 产物契约 + 平台模块纯度门 + 契约冒烟
+      # if: always() 让后续步骤即使前面失败也照跑，一次运行就能看全所有问题。
       - name: 浏览器半契约与纯度
+        if: always()
         run: pnpm run check:client
 
       # dist/ 是提交进仓库的（这样从 git 安装无需构建审批），
       # 因此必须防止它与源码漂移：重新构建后若与提交的产物有差异，这一步会失败。
       - name: 提交的产物与重新构建一致
+        if: always()
         run: pnpm run check:dist
