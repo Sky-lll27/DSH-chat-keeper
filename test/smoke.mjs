@@ -25,11 +25,36 @@ import { MIRROR_RELATIVE_PATH } from '../lib/trash-mirror.js'
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)))
 
 let passed = 0
+/**
+ * CI 里把失败写成 GitHub 注解（`::error::`）。
+ *
+ * 为什么需要：Actions 的日志端点在未鉴权时返回 403，光看 API 只能得到"某一步失败"，
+ * 不知道是哪条断言。注解会出现在 run 的 annotations 里（公开可读），
+ * 失败原因就能直接取到，不必先拿到日志。
+ */
+function announceFailure(message) {
+  if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error::${message}`)
+}
+process.on('uncaughtException', (error) => {
+  announceFailure(`${error?.name ?? 'Error'}: ${error?.message ?? String(error)}`)
+  console.error(error)
+  process.exit(1)
+})
+process.on('unhandledRejection', (reason) => {
+  announceFailure(`unhandledRejection: ${reason?.message ?? String(reason)}`)
+  console.error(reason)
+  process.exit(1)
+})
 /** 同步检查；传入 async 回调会立刻报错，避免假通过。 */
 function check(label, fn) {
-  const result = fn()
-  if (result && typeof result.then === 'function') {
-    throw new Error(`check("${label}") 收到 Promise，请改用 checkAsync`)
+  try {
+    const result = fn()
+    if (result && typeof result.then === 'function') {
+      throw new Error(`check("${label}") 收到 Promise，请改用 checkAsync`)
+    }
+  } catch (error) {
+    announceFailure(`${label} — ${error?.message ?? String(error)}`)
+    throw error
   }
   passed += 1
   console.log(`  ok  ${label}`)
