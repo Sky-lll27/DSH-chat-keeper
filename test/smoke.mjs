@@ -717,8 +717,10 @@ const memoId = 'memo-zh-1'
 const memoDir = join(home, 'sessions', '--F--', memoId)
 mkdirSync(memoDir, { recursive: true })
 const memoFrames = [
-  JSON.stringify({ type: 'user/message', data: { content: [{ type: 'text', text: '这是一句内容检索示例，用来验证子串搜索' }] } }),
-  JSON.stringify({ type: 'assistant/message', data: { content: [{ type: 'text', text: '内容检索示例：子串必须能命中' }] } }),
+  JSON.stringify({ type: 'user/message', seq: 1, time: Date.now() - 60000, data: { content: [{ type: 'text', text: '这是一句内容检索示例，用来验证子串搜索' }] } }),
+  // 助手消息的真实形状是 data.message.content（user/message 才是 data.content）——
+  // 两种都按真身写，才能同时验证"搜索读得到"和"投影认得出来"。
+  JSON.stringify({ type: 'assistant/message', seq: 2, time: Date.now() - 30000, data: { message: { content: [{ type: 'text', text: '内容检索示例：子串必须能命中' }] } } }),
 ]
 writeFileSync(
   join(memoDir, 'session.v4.jsonl.zstd'),
@@ -737,6 +739,38 @@ check('磁盘扫描如实报告规模与耗时', () => {
   assert.ok(zh.diagnostics.diskScanned >= 1, JSON.stringify(zh.diagnostics))
   assert.equal(typeof zh.diagnostics.diskElapsedMs, 'number')
   assert.equal(zh.diagnostics.diskTimedOut, false)
+})
+check('搜索结果带回命中位置（seq / 事件类型）', () => {
+  const hit = zh.hits.find(row => row.id === memoId)
+  assert.equal(hit.seq, 1, JSON.stringify(hit))
+  assert.equal(hit.eventType, 'user/message')
+  assert.equal(typeof hit.at, 'string')
+})
+
+/* ── 原文对照：DSH 没有事件深链接，所以"看那句话的上下文"必须由工具提供 ── */
+const coldHistory = await runClean('conversation_history', { conversation_id: memoId })
+check('冷对话（未装载）也能读历史——自动回退到磁盘', () => {
+  assert.equal(coldHistory.available, true, JSON.stringify(coldHistory).slice(0, 300))
+  assert.equal(coldHistory.source, 'disk')
+  assert.equal(coldHistory.messageCount, 2)
+  assert.ok(String(coldHistory.messages[0].text).includes('检索'), JSON.stringify(coldHistory.messages[0]))
+})
+
+const aroundHistory = await runClean('conversation_history', { conversation_id: memoId, around_seq: 2, window: 5 })
+check('around_seq：只取命中处附近的消息（原文对照）', () => {
+  assert.equal(aroundHistory.available, true)
+  assert.equal(aroundHistory.aroundSeq, 2)
+  assert.ok(aroundHistory.messages.length >= 1)
+  assert.ok(aroundHistory.messages.every(row => typeof row.seq === 'number'))
+  assert.ok(aroundHistory.messages.some(row => String(row.text).includes('内容检索示例')), JSON.stringify(aroundHistory.messages))
+})
+
+const withContext = await runClean('conversation_search', { query: '检索', limit: 5, include_context: true, context_window: 5 })
+check('include_context：搜索直接把命中处前后的原文一起带回', () => {
+  const hit = withContext.hits.find(row => row.id === memoId)
+  assert.ok(Array.isArray(hit.context), JSON.stringify(withContext).slice(0, 400))
+  assert.ok(hit.context.length >= 1)
+  assert.equal(withContext.diagnostics.contextAttached, 1)
 })
 // 内容不是 zstd 的日志（夹具里 session-1 是 'x'.repeat(128)）不会报错，只是解出 0 条事件
 // —— 残缺日志不该拖垮整次搜索。真正读不开的情况才进 unreadable，

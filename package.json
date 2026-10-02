@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation-manager",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "description": "DeepSeek Harness 对话管理器：跨工作区总表、正文搜索（面板高亮摘要 / 工具支持中文子串与冷对话）、按时间批量归档，以及 DSH 界面没有的磁盘层面删除（回收站式，可恢复）。",
   "keywords": [

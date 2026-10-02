@@ -639,6 +639,7 @@ export function ManagerBody(props: ManagerProps) {
                   {t('searchCopy')}
                 </button>
               </div>
+              <div className="dshm-hint dshm-hint--pad">{t('searchJumpHint')}</div>
               <ul className="dshm-hits">
                 {hitRows.map((row) => (
                   <li key={row.id}>

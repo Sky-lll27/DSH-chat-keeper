@@ -287,6 +287,10 @@ export const CSS = `
 .dshm-hint--inline {
   align-self: center;
 }
+/* 命中列表上方的提示行（说明"点结果跳不到原句"这件事与替代办法）。 */
+.dshm-hint--pad {
+  padding: 6px 12px;
+}
 .dshm-empty {
   padding: 32px 12px;
   text-align: center;

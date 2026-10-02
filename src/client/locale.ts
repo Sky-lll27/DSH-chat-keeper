@@ -74,6 +74,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       | 'searchDisabledHint'
       | 'searchCopy'
       | 'copiedHitsHint'
+      | 'searchJumpHint'
       | 'copyFailed'
   }
 }
@@ -142,6 +143,7 @@ export const en: LocaleDictOf<typeof NS> = {
   searchDisabledHint: 'DSH full-text search is opt-in (the bundles ship openAt: never). This plugin\'s bundle patch turns it on; you can also override session-query-sqlite\'s openAt in the profile cordis.patch.yml.',
   searchCopy: 'Copy results',
   copiedHitsHint: 'Copied {count} search result(s).',
+  searchJumpHint: 'DSH has no event deep link: selecting a result only opens the conversation, never the matched message. To read the original text around a hit, ask in chat — "search for X and show the surrounding messages" — the tool locates the exact event (seq) and returns that context.',
   purgeBin: 'Empty recycle bin',
   purgeHint: 'Permanently erases every batch — this cannot be undone.',
   copiedPurgeHint: 'Copied the instruction to permanently erase {count} batch(es).',
@@ -212,6 +214,7 @@ export const zh: LocaleDictOf<typeof NS> = {
   searchDisabledHint: 'DSH 的全文索引默认关闭（组合包给的是 openAt: never）。本插件的组合包 patch 会打开它；也可以在 profile 的 cordis.patch.yml 里自行覆盖 session-query-sqlite 的 openAt。',
   searchCopy: '复制结果',
   copiedHitsHint: '已复制 {count} 条搜索结果。',
+  searchJumpHint: 'DSH 没有「跳到某条消息」的接口——点结果只会打开会话，到不了那一句。想看原句上下文：在对话里说「帮我搜『X』并读出上下文」，工具会定位到确切位置（seq）并返回前后原文。',
   purgeBin: '清空回收站',
   purgeHint: '永久删除全部批次——不可恢复。',
   copiedPurgeHint: '已复制清空指令（{count} 批，永久删除、不可恢复）。',
