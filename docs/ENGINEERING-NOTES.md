@@ -124,7 +124,7 @@ dsh-conversation-manager/
 ├── test/smoke.mjs        # 宿主半冒烟测试（伪造 ctx 驱动全流程）
 ├── scripts/
 │   ├── verify-client.mjs # dist/client.js 产物自检（工厂契约 + 平台模块纯度）
-│   └── smoke-client.mjs  # 产物契约冒烟测试（真实执行 apply，33 项断言）
+│   └── smoke-client.mjs  # 产物契约冒烟测试（真实执行 apply，并用极简渲染器渲染正文组件，66 项断言）
 ├── tsdown.config.ts      # 自包含的客户端 bundle 构建配置
 ├── tsconfig.json         # 编辑器/类型检查配置
 ├── cordis.patch.yml      # 组合包 patch（按包名引用，供 profile 安装用）
@@ -331,6 +331,10 @@ export function apply(ctx) {
   （运行中 / 等待交互 / 已完成未读 / 空闲）。
 - **按时间批量**：下拉选「7 / 30 / 90 天前的」只保留最近活动早于该时间的会话，
   再配合「全选」即可一次处理一批陈旧对话（清理场景的主力动作）。
+- **「显示已归档」开关**：关掉后总表不再列出已归档的行；顶部统计**不跟着隐藏**（仍如实报告
+  `K 已归档`），旁边补一枚 `符合条件 N 个` 说明当前可见几条。取值存 `localStorage`
+  （键 `dsh-conversation-manager/show-archived`），面板重开后保持。
+  **刻意只过滤总表**：搜索结果不跟着过滤——搜到却看不见会被用户当成"搜索坏了"。
 - **批量归档 / 取消归档**：勾选任意多行一次提交，逐条执行并汇总失败数。
 - **有工作在进行时的归档**：先发普通归档；若 Host 以 `workspace/session-active` 拒绝，
   弹出「停止并归档？」确认，确认后带 `stopActivity: true` 重发（与内置侧栏同一 Host 语义）。
@@ -526,9 +530,9 @@ ASCII   "DSH"             → 1
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
 | 宿主半语法 | `pnpm run check` | **通过**（exit 0） |
-| 宿主半冒烟 | `pnpm test` | **全部通过：42 项检查** |
+| 宿主半冒烟 | `pnpm test` | **全部通过：59 项检查** |
 | 客户端产物契约 | `pnpm run verify:client` | **通过**（工厂头尾 + 平台模块纯度） |
-| 客户端契约冒烟 | `pnpm run smoke:client` | **41/41 项通过** |
+| 客户端契约冒烟 | `pnpm run smoke:client` | **66/66 项通过**（含「显示已归档」开关的面板渲染断言） |
 | 实机挂载（宿主半） | `conversation_selftest` | **8 个工具已注册、跟踪 6 个真实会话、事件实时到达** |
 | 实机界面（浏览器半） | 你按 F5 后的目视确认 | ⏳ 待你确认 |
 

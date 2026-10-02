@@ -7,12 +7,14 @@
  *   require                       ← 三个平台模块的最小实现
  *   ctx                           ← 记录 register/effect/inject 调用的假上下文
  *
- * 验证四件事：
+ * 验证五件事：
  *   1. bundle 恰好注册一次工厂，且 id 正确；
  *   2. 工厂执行后导出插件契约 { name, inject, apply }；
  *   3. apply(ctx) 不抛错；
  *   4. apply 真的注册了：页签类型（含 guide 条目）、正文/标题 keyed slot、
- *      左侧会话行菜单项、locale 中英字典、样式 effect。
+ *      左侧会话行菜单项、locale 中英字典、样式 effect；
+ *   5. 正文组件**真的渲染一遍**（极简渲染器，不跑 effect），断言可观察到的面板行为——
+ *      目前是「显示已归档」开关：关掉后已归档的行从总表消失、统计与开关状态如实反映。
  *
  * 用法：node scripts/smoke-client.mjs [产物路径]
  */
@@ -60,15 +62,55 @@ check('工厂 id 为 dsh-conversation-manager', entry?.id === 'dsh-conversation-
 check('工厂是函数', typeof entry?.factory === 'function')
 
 // ── 2. 执行工厂：平台模块用最小桩 ────────────────────────────────────────────
+/* 桩比"最小"多了两件东西，因为第 6 节要把正文组件真的渲染出来：
+ *   · hook 有**按渲染路径分格的状态存储**——useState/useMemo 跨渲染保值，
+ *     useEffect 故意不执行（面板的 effect 会发异步请求、起定时器，测试不需要它们）；
+ *   · jsx/jsxs 产出 { type, props, key } 节点，而不是空对象——否则没有树可遍历。 */
+const hookStores = new Map()
+let activeStore = null
+function storeFor(path) {
+  let store = hookStores.get(path)
+  if (store === undefined) {
+    store = { slots: [], index: 0 }
+    hookStores.set(path, store)
+  }
+  store.index = 0
+  return store
+}
 const reactStub = {
-  createElement: () => ({}),
+  createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
   Fragment: Symbol('Fragment'),
-  useState: value => [typeof value === 'function' ? value() : value, () => {}],
-  useEffect: () => {},
-  useMemo: factory => factory(),
+  useState: (initial) => {
+    if (activeStore === null) throw new Error('useState 被组件外调用')
+    const store = activeStore
+    const at = store.index++
+    if (store.slots.length <= at) {
+      store.slots.push({ value: typeof initial === 'function' ? initial() : initial })
+    }
+    const slot = store.slots[at]
+    return [slot.value, (next) => {
+      slot.value = typeof next === 'function' ? next(slot.value) : next
+    }]
+  },
+  useEffect: () => {}, // 副作用不在冒烟测试的射程内：不跑，就不可能有未处理拒绝。
+  useMemo: (factory, deps) => {
+    const store = activeStore
+    const at = store.index++
+    const slot = store.slots[at]
+    const same = slot !== undefined && Array.isArray(slot.deps)
+      && Array.isArray(deps) && slot.deps.length === deps.length
+      && slot.deps.every((value, i) => value === deps[i])
+    if (same) return slot.value
+    store.slots[at] = { deps, value: factory() }
+    return store.slots[at].value
+  },
   useRef: value => ({ current: value }),
 }
-const jsxRuntimeStub = { jsx: () => ({}), jsxs: () => ({}), Fragment: Symbol('Fragment') }
+const jsxRuntimeStub = {
+  jsx: (type, props, key) => ({ type, props: props ?? {}, key }),
+  jsxs: (type, props, key) => ({ type, props: props ?? {}, key }),
+  Fragment: Symbol('Fragment'),
+}
 const primitivesStub = { MenuItemButton: () => ({}) }
 const moduleTable = {
   'react': reactStub,
@@ -210,6 +252,12 @@ const dicts = recorded.locales[0]?.dicts
 check('字典同时含 en 与 zh', dicts !== undefined && dicts.en !== undefined && dicts.zh !== undefined)
 check('en 与 zh 键集合一致', dicts !== undefined
   && JSON.stringify(Object.keys(dicts.en).sort()) === JSON.stringify(Object.keys(dicts.zh).sort()))
+for (const lang of ['en', 'zh']) {
+  check(`${lang} 字典有「显示已归档」开关的文案（标签 + 说明）`, dicts !== undefined
+    && typeof dicts[lang]?.showArchived === 'string' && dicts[lang].showArchived.length > 0
+    && typeof dicts[lang]?.showArchivedHint === 'string' && dicts[lang].showArchivedHint.length > 0,
+  JSON.stringify({ showArchived: dicts?.[lang]?.showArchived, showArchivedHint: dicts?.[lang]?.showArchivedHint }))
+}
 check('注册了样式 effect', recorded.effects.some(label => String(label).includes('styles')))
 
 // ── 5. 激活探针 ─────────────────────────────────────────────────────────────
@@ -224,6 +272,135 @@ if (typeof probeRaw === 'string') {
   check('第二条是 done 且 ok', log?.[1]?.phase === 'done' && log[1]?.ok === true, JSON.stringify(log?.[1]))
   check('done 记录了注册的 slot 名', Array.isArray(log?.[1]?.slots) && log[1].slots.includes('sidebar.right.pane.tab'))
   check('每条都有时间戳', log?.every(entry => typeof entry?.at === 'string'))
+}
+
+// ── 6. 面板行为：「显示已归档」开关 ────────────────────────────────────────
+/* 极简渲染器：把正文组件的 JSX 树摊平成宿主元素清单（元素 + 属性 + 其下文本）。
+ * 只做三件事：函数组件按渲染路径分格存 hook 状态、Fragment 展开、其余原样收集。
+ * 不跑 effect —— 所以这里不会有任何网络、定时器或未处理拒绝。 */
+function invokeComponent(fn, props, path) {
+  const previous = activeStore
+  activeStore = storeFor(path)
+  try {
+    return fn(props)
+  } finally {
+    activeStore = previous
+  }
+}
+function walk(node, path, host) {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map((child, index) => walk(child, `${path}[${index}]`, host)).join('')
+  if (typeof node !== 'object') return ''
+  const { type, props } = node
+  if (type === undefined) return ''
+  if (typeof type === 'function') {
+    const childPath = `${path}/${type.name === '' || type.name === undefined ? 'anonymous' : type.name}`
+    return walk(invokeComponent(type, props ?? {}, childPath), childPath, host)
+  }
+  if (typeof type === 'symbol') return walk(props?.children, `${path}/fragment`, host)
+  const text = walk(props?.children, `${path}/${String(type)}`, host)
+  host.push({ type, props, path, text })
+  return text
+}
+let panelSeq = 0
+/** 渲染一次正文。path 不传就新开一格状态（等于"重新打开面板"），传同一个值则延续状态。 */
+function renderPanel(props, path) {
+  const used = path ?? `panel-${++panelSeq}`
+  const host = []
+  walk(invokeComponent(bodySlot.component, props, used), used, host)
+  return host
+}
+
+/* 固定夹具：一个未归档 + 一个已归档的示例行（中性词，不含任何真实对话内容）。 */
+function panelFixture() {
+  const sessions = {
+    ids: ['s-live', 's-archived'],
+    byId: {
+      's-live': { id: 's-live', displayTitle: '示例对话（未归档）', running: true, blank: false, updatedAt: 2000 },
+      's-archived': { id: 's-archived', displayTitle: '示例对话（已归档）', running: false, blank: false, updatedAt: 1000 },
+    },
+    phase: 'ready',
+  }
+  const status = new Map([
+    ['s-live', { running: true, pendingInteraction: false, completionUnread: false }],
+    ['s-archived', { running: false, pendingInteraction: false, completionUnread: false }],
+  ])
+  const workspaces = {
+    items: [{ workspaceId: 'w-demo', title: '示例工作区', path: '/tmp/demo', sessionIds: ['s-live', 's-archived'] }],
+    archivedSessionIds: ['s-archived'],
+    pinnedSessionIds: [],
+  }
+  // t 保持可断言：带参数时把参数也拼进文本，测试直接读得到数字。
+  const t = (key, params) => (params === undefined ? key : `${key}=${JSON.stringify(params)}`)
+  return {
+    t,
+    useSessions: selector => selector(sessions),
+    useSessionStatus: selector => selector(status),
+    useWorkspaces: selector => selector(workspaces),
+    useSession: selector => selector({ sessionId: 's-panel' }),
+    openSession: () => ({ ok: true }),
+    setArchived: async () => ({ ok: true }),
+    readTrashMirror: async () => ({ ok: false, code: 'not-needed-in-smoke' }),
+    refreshSessions: async () => ({ ok: true }),
+    searchContent: async () => ({ ok: true, hits: [], hasMore: false }),
+  }
+}
+const SHOW_ARCHIVED_KEY = 'dsh-conversation-manager/show-archived'
+/** 只取总表数据行（表头的 tr 没有 dshm-row 类名）。 */
+const dataRows = host => host.filter(node => typeof node.props?.className === 'string' && node.props.className.includes('dshm-row'))
+const rowTitles = host => dataRows(host).map(node => node.text)
+/** 找到「显示已归档」开关：靠文案定位标签，再取它里面的那个勾选框。 */
+function archivedToggle(host) {
+  const label = host.find(node => node.type === 'label' && node.text.includes('showArchived'))
+  if (label === undefined) return undefined
+  const children = Array.isArray(label.props?.children) ? label.props?.children : [label.props?.children]
+  return { label, input: children.find(child => child !== null && typeof child === 'object' && child.type === 'input') }
+}
+const badgeText = (host, prefix) => host.find(node => node.type === 'span' && node.text.startsWith(prefix))?.text
+
+// 6.1 没存过取值 = 默认显示（本插件一直以来的行为）。
+storage.delete(SHOW_ARCHIVED_KEY)
+{
+  const host = renderPanel(panelFixture())
+  check('默认把已归档的行也列出来', rowTitles(host).length === 2
+    && rowTitles(host).some(text => text.includes('示例对话（已归档）')), JSON.stringify(rowTitles(host)))
+  check('「显示已归档」开关默认是勾选的', archivedToggle(host)?.input?.props?.checked === true)
+  check('开关挂着说明（搜索结果不受它限制）', archivedToggle(host)?.label?.props?.title === 'showArchivedHint',
+    String(archivedToggle(host)?.label?.props?.title))
+  check('时间筛选未开、归档未隐藏时不出「符合条件」徽标',
+    badgeText(host, 'filteredCount=') === undefined, String(badgeText(host, 'filteredCount=')))
+}
+
+// 6.2 存了 'false' = 打开面板就是隐藏的。
+storage.set(SHOW_ARCHIVED_KEY, 'false')
+{
+  const host = renderPanel(panelFixture())
+  const titles = rowTitles(host)
+  check('开关关掉后已归档的行从总表消失', titles.length === 1 && titles[0].includes('示例对话（未归档）'), JSON.stringify(titles))
+  check('未归档的行照常保留', titles.some(text => text.includes('示例对话（未归档）')), JSON.stringify(titles))
+  check('开关如实反映存储里的取值（未勾选）', archivedToggle(host)?.input?.props?.checked === false)
+  check('顶部统计仍如实报告 1 个已归档（统计不跟着隐藏）',
+    badgeText(host, 'statsLine=')?.includes('"archived":1') === true, String(badgeText(host, 'statsLine=')))
+  check('隐藏后补出当前可见条数徽标', badgeText(host, 'filteredCount=')?.includes('"count":1') === true,
+    String(badgeText(host, 'filteredCount=')))
+}
+
+// 6.3 点一下切换，并把取值写进 localStorage（面板重开后仍是这个取舍）。
+storage.set(SHOW_ARCHIVED_KEY, 'false')
+{
+  const props = panelFixture()
+  const path = 'panel-toggle'
+  check('切换前：已归档的行是隐藏的', rowTitles(renderPanel(props, path)).length === 1)
+  archivedToggle(renderPanel(props, path))?.input?.props?.onChange({ target: { checked: true } })
+  const opened = renderPanel(props, path)
+  check('点一下开关：已归档的行回来了', rowTitles(opened).length === 2, JSON.stringify(rowTitles(opened)))
+  check('开关变成勾选', archivedToggle(opened)?.input?.props?.checked === true)
+  check('取值写进了 localStorage', storage.get(SHOW_ARCHIVED_KEY) === 'true', String(storage.get(SHOW_ARCHIVED_KEY)))
+  archivedToggle(opened)?.input?.props?.onChange({ target: { checked: false } })
+  const closed = renderPanel(props, path)
+  check('再点一下：已归档的行又隐藏了', rowTitles(closed).length === 1, JSON.stringify(rowTitles(closed)))
+  check('隐藏的取值同样被记住', storage.get(SHOW_ARCHIVED_KEY) === 'false', String(storage.get(SHOW_ARCHIVED_KEY)))
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────────────

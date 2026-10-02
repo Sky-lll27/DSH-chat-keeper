@@ -30,6 +30,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       | 'filterOlder90'
       | 'filteredCount'
       | 'timeFilterHint'
+      | 'showArchived'
+      | 'showArchivedHint'
       | 'trashTitle'
       | 'trashEmpty'
       | 'trashUnavailable'
@@ -99,6 +101,8 @@ export const en: LocaleDictOf<typeof NS> = {
   filterOlder90: 'Older than 90 days',
   filteredCount: '{count} matching',
   timeFilterHint: 'Keep only conversations whose last activity is older than this',
+  showArchived: 'Show archived',
+  showArchivedHint: 'Applies to the table below only — search results always show every match, archived or not.',
   trashTitle: 'Recycle bin: {count} batch(es)',
   trashEmpty: 'Recycle bin: empty',
   trashUnavailable: 'Recycle bin: mirror unreadable ({message})',
@@ -170,6 +174,8 @@ export const zh: LocaleDictOf<typeof NS> = {
   filterOlder90: '90 天前的',
   filteredCount: '符合条件 {count} 个',
   timeFilterHint: '只保留最近活动早于该时间的会话',
+  showArchived: '显示已归档',
+  showArchivedHint: '只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。',
   trashTitle: '回收站：{count} 批',
   trashEmpty: '回收站：空',
   trashUnavailable: '回收站：读不到镜像（{message}）',

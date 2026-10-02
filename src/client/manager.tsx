@@ -23,6 +23,14 @@ import { NS } from './locale.ts'
 /** 回收站镜像在工作区里的相对路径。宿主半的 `lib/trash-mirror.js` 写它，两边必须一致。 */
 export const TRASH_MIRROR_PATH = '.dsh-conversation-manager/trash.json'
 
+/**
+ * 「显示已归档」开关的持久化键。
+ *
+ * 面板没有别的持久化通道（浏览器半没有文件权限），所以记住上一次的取舍只能靠
+ * localStorage；它跨页签、跨重开都有效，取值就是 `'true'` / `'false'`。
+ */
+export const SHOW_ARCHIVED_KEY = 'dsh-conversation-manager/show-archived'
+
 /** 操作结果（inject face 把宿主错误折叠成 JSON 结果，避免组件依赖 Remote 类型）。 */
 export interface ActionResult {
   ok: boolean
@@ -217,6 +225,21 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
+ * 读「显示已归档」开关的上次取值。
+ *
+ * 缺省（没存过、存储被禁用、读取出错）一律返回 `true`——保持本插件一直以来的
+ * 默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+ */
+function readShowArchived(): boolean {
+  try {
+    if (typeof window === 'undefined') return true
+    return window.localStorage.getItem(SHOW_ARCHIVED_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+/**
  * 在摘要片段里标出关键词。
  *
  * 为什么要有它：原生侧栏的搜索结果只把 snippet 原样渲染（见 ui-workspace 的
@@ -277,6 +300,19 @@ export function ManagerBody(props: ManagerProps) {
   const [trash, setTrash] = useState<TrashMirror | null>(null)
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
+
+  /* ── 「显示已归档」开关 ──
+   * 只作用于下方总表：搜索结果**不跟着过滤**——搜到却看不见会被当成"搜索坏了"。
+   * 默认显示（与本插件历史行为一致）；选择记进 localStorage，面板重开后仍是上次的取舍。 */
+  const [showArchived, setShowArchivedState] = useState(readShowArchived)
+  const setShowArchived = (next: boolean) => {
+    setShowArchivedState(next)
+    try {
+      window.localStorage.setItem(SHOW_ARCHIVED_KEY, String(next))
+    } catch {
+      // 存不下只影响本次显示，不值得打断用户。
+    }
+  }
 
   /* ── 正文搜索 ──
    * 与原生侧栏搜索的关系（README 有完整说明）：原生**也能搜正文**，但它把结果截到 20 个会话、
@@ -434,7 +470,7 @@ export function ManagerBody(props: ManagerProps) {
     showNotice(ok ? t('copiedHitsHint', { count: hitRows.length }) : t('copyFailed'))
   }
 
-  /* 行汇总：非空白、非 subagent；再套一层时间筛选。 */
+  /* 行汇总：非空白、非 subagent；再套时间筛选与「显示已归档」开关。 */
   const rows = useMemo(() => {
     const byId = listState?.byId ?? {}
     const ids = listState?.ids ?? []
@@ -450,9 +486,10 @@ export function ManagerBody(props: ManagerProps) {
     const cutoff = olderThan === 0 ? 0 : now - olderThan * 86400000
     return out
       .filter(row => !row.blank && row.origin !== 'subagent')
+      .filter(row => showArchived || !archivedSet.has(row.id))
       .filter(row => cutoff === 0 || (row.updatedAt ?? 0) < cutoff)
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-  }, [listState, olderThan, now])
+  }, [listState, olderThan, now, showArchived, archivedSet])
 
   /* 选择集合随可见行修剪。 */
   useEffect(() => {
@@ -593,7 +630,17 @@ export function ManagerBody(props: ManagerProps) {
             <option value="30">{t('filterOlder30')}</option>
             <option value="90">{t('filterOlder90')}</option>
           </select>
-          {olderThan !== 0 && <span className="dshm-badge">{t('filteredCount', { count: rows.length })}</span>}
+          {(olderThan !== 0 || !showArchived) && (
+            <span className="dshm-badge">{t('filteredCount', { count: rows.length })}</span>
+          )}
+          <label className="dshm-toggle" title={t('showArchivedHint')}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />
+            {t('showArchived')}
+          </label>
           <label className="dshm-toggle">
             <input type="checkbox" checked={allChecked} onChange={toggleAll} />
             {t('selectAll')}

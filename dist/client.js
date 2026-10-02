@@ -29,6 +29,8 @@ window.__ModuleLoader__.load({
 			filterOlder90: "Older than 90 days",
 			filteredCount: "{count} matching",
 			timeFilterHint: "Keep only conversations whose last activity is older than this",
+			showArchived: "Show archived",
+			showArchivedHint: "Applies to the table below only — search results always show every match, archived or not.",
 			trashTitle: "Recycle bin: {count} batch(es)",
 			trashEmpty: "Recycle bin: empty",
 			trashUnavailable: "Recycle bin: mirror unreadable ({message})",
@@ -99,6 +101,8 @@ window.__ModuleLoader__.load({
 			filterOlder90: "90 天前的",
 			filteredCount: "符合条件 {count} 个",
 			timeFilterHint: "只保留最近活动早于该时间的会话",
+			showArchived: "显示已归档",
+			showArchivedHint: "只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。",
 			trashTitle: "回收站：{count} 批",
 			trashEmpty: "回收站：空",
 			trashUnavailable: "回收站：读不到镜像（{message}）",
@@ -537,6 +541,13 @@ window.__ModuleLoader__.load({
 		*/
 		/** 回收站镜像在工作区里的相对路径。宿主半的 `lib/trash-mirror.js` 写它，两边必须一致。 */
 		const TRASH_MIRROR_PATH = ".dsh-conversation-manager/trash.json";
+		/**
+		* 「显示已归档」开关的持久化键。
+		*
+		* 面板没有别的持久化通道（浏览器半没有文件权限），所以记住上一次的取舍只能靠
+		* localStorage；它跨页签、跨重开都有效，取值就是 `'true'` / `'false'`。
+		*/
+		const SHOW_ARCHIVED_KEY = "dsh-conversation-manager/show-archived";
 		/** 相对时间文案。用 any 收口，避免与实际 t 的泛型签名冲突。 */
 		function relativeTime(ts, now, t) {
 			if (!ts || ts <= 0) return "";
@@ -610,6 +621,20 @@ window.__ModuleLoader__.load({
 			}
 		}
 		/**
+		* 读「显示已归档」开关的上次取值。
+		*
+		* 缺省（没存过、存储被禁用、读取出错）一律返回 `true`——保持本插件一直以来的
+		* 默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+		*/
+		function readShowArchived() {
+			try {
+				if (typeof window === "undefined") return true;
+				return window.localStorage.getItem(SHOW_ARCHIVED_KEY) !== "false";
+			} catch {
+				return true;
+			}
+		}
+		/**
 		* 在摘要片段里标出关键词。
 		*
 		* 为什么要有它：原生侧栏的搜索结果只把 snippet 原样渲染（见 ui-workspace 的
@@ -662,6 +687,13 @@ window.__ModuleLoader__.load({
 			const [trash, setTrash] = (0, react.useState)(null);
 			const [trashError, setTrashError] = (0, react.useState)(null);
 			const [trashBusy, setTrashBusy] = (0, react.useState)(false);
+			const [showArchived, setShowArchivedState] = (0, react.useState)(readShowArchived);
+			const setShowArchived = (next) => {
+				setShowArchivedState(next);
+				try {
+					window.localStorage.setItem(SHOW_ARCHIVED_KEY, String(next));
+				} catch {}
+			};
 			const [query, setQuery] = (0, react.useState)("");
 			const [searchBusy, setSearchBusy] = (0, react.useState)(false);
 			const [hits, setHits] = (0, react.useState)([]);
@@ -818,11 +850,13 @@ window.__ModuleLoader__.load({
 				for (const id of ids) add(byId[id]);
 				for (const row of Object.values(byId)) add(row);
 				const cutoff = olderThan === 0 ? 0 : now - olderThan * 864e5;
-				return out.filter((row) => !row.blank && row.origin !== "subagent").filter((row) => cutoff === 0 || (row.updatedAt ?? 0) < cutoff).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+				return out.filter((row) => !row.blank && row.origin !== "subagent").filter((row) => showArchived || !archivedSet.has(row.id)).filter((row) => cutoff === 0 || (row.updatedAt ?? 0) < cutoff).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 			}, [
 				listState,
 				olderThan,
-				now
+				now,
+				showArchived,
+				archivedSet
 			]);
 			(0, react.useEffect)(() => {
 				const visible = new Set(rows.map((row) => row.id));
@@ -965,9 +999,18 @@ window.__ModuleLoader__.load({
 											})
 										]
 									}),
-									olderThan !== 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									(olderThan !== 0 || !showArchived) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: "dshm-badge",
 										children: t("filteredCount", { count: rows.length })
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+										className: "dshm-toggle",
+										title: t("showArchivedHint"),
+										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+											type: "checkbox",
+											checked: showArchived,
+											onChange: (event) => setShowArchived(event.target.checked)
+										}), t("showArchived")]
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 										className: "dshm-toggle",
