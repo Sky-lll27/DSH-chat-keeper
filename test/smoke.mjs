@@ -35,13 +35,19 @@ let passed = 0
 function announceFailure(message) {
   if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error::${message}`)
 }
+/** 取栈里指向本测试文件的调用点：注解里带上它，就知道是哪一行失败的。 */
+function where(error) {
+  const frames = String(error?.stack ?? '').split('\n')
+  const own = frames.filter(line => line.includes('smoke.mjs'))
+  return (own[0] ?? frames.find(line => line.trim().startsWith('at ')) ?? '').trim()
+}
 process.on('uncaughtException', (error) => {
-  announceFailure(`${error?.name ?? 'Error'}: ${error?.message ?? String(error)}`)
+  announceFailure(`${error?.name ?? 'Error'}: ${error?.message ?? String(error)} @ ${where(error)}`)
   console.error(error)
   process.exit(1)
 })
 process.on('unhandledRejection', (reason) => {
-  announceFailure(`unhandledRejection: ${reason?.message ?? String(reason)}`)
+  announceFailure(`unhandledRejection: ${reason?.message ?? String(reason)} @ ${where(reason)}`)
   console.error(reason)
   process.exit(1)
 })
