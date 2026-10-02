@@ -64,6 +64,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       | 'pasteHint'
       | 'copiedDeleteHint'
       | 'copiedRestoreHint'
+      | 'searchPlaceholder'
+      | 'searchHint'
+      | 'searchClear'
+      | 'searchHits'
+      | 'searchMore'
+      | 'searchNoHits'
+      | 'searchFailed'
+      | 'searchDisabledHint'
+      | 'searchCopy'
+      | 'copiedHitsHint'
       | 'copyFailed'
   }
 }
@@ -122,6 +132,16 @@ export const en: LocaleDictOf<typeof NS> = {
   pasteHint: 'Paste it into the input box and send.',
   copiedDeleteHint: 'Copied the delete instruction for {count} conversation(s).',
   copiedRestoreHint: 'Copied the restore instruction.',
+  searchPlaceholder: 'Search conversation text…',
+  searchHint: 'Search conversation bodies through the DSH content index (the index must be enabled).',
+  searchClear: 'Clear',
+  searchHits: '{count} conversation(s) matched',
+  searchMore: 'More matches exist — try a more specific phrase',
+  searchNoHits: 'No matching conversation',
+  searchFailed: 'Search failed: {message}',
+  searchDisabledHint: 'DSH full-text search is opt-in (the bundles ship openAt: never). This plugin\'s bundle patch turns it on; you can also override session-query-sqlite\'s openAt in the profile cordis.patch.yml.',
+  searchCopy: 'Copy results',
+  copiedHitsHint: 'Copied {count} search result(s).',
   purgeBin: 'Empty recycle bin',
   purgeHint: 'Permanently erases every batch — this cannot be undone.',
   copiedPurgeHint: 'Copied the instruction to permanently erase {count} batch(es).',
@@ -182,6 +202,16 @@ export const zh: LocaleDictOf<typeof NS> = {
   pasteHint: '粘贴到输入框发送。',
   copiedDeleteHint: '已复制 {count} 个对话的删除指令。',
   copiedRestoreHint: '已复制恢复指令。',
+  searchPlaceholder: '搜索对话正文…',
+  searchHint: '搜索对话正文（走 DSH 的内容索引；索引需要已打开）',
+  searchClear: '清除',
+  searchHits: '命中 {count} 个对话',
+  searchMore: '还有更多命中，建议用更具体的关键词',
+  searchNoHits: '没有匹配的对话',
+  searchFailed: '搜索失败：{message}',
+  searchDisabledHint: 'DSH 的全文索引默认关闭（组合包给的是 openAt: never）。本插件的组合包 patch 会打开它；也可以在 profile 的 cordis.patch.yml 里自行覆盖 session-query-sqlite 的 openAt。',
+  searchCopy: '复制结果',
+  copiedHitsHint: '已复制 {count} 条搜索结果。',
   purgeBin: '清空回收站',
   purgeHint: '永久删除全部批次——不可恢复。',
   copiedPurgeHint: '已复制清空指令（{count} 批，永久删除、不可恢复）。',

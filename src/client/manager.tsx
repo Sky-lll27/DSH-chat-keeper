@@ -11,7 +11,7 @@
  *      来自宿主写在工作区里的镜像 `.dsh-conversation-manager/trash.json`
  *      （见宿主半的 `lib/trash-mirror.js`；两半各自打包，路径在两处各写一份）。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type {
   InjectFace,
   PropsLocale,
@@ -41,6 +41,27 @@ export interface MirrorReadResult {
   tried?: number
 }
 
+/**
+ * 一条正文命中。
+ *
+ * 字段说明：宿主的内容索引每条只回 `{ sessionId, snippet }`（snippet 截到 240 个码点），
+ * 标题、工作区、状态都由客户端用已有的会话目录补齐——这一点是从宿主的
+ * `authorized.push({ sessionId, snippet })` 里读出来的，不是猜的。
+ */
+export interface SearchHit {
+  sessionId: SessionId
+  snippet?: string
+}
+
+/** 正文搜索的结果。 */
+export interface SearchOutcome {
+  ok: boolean
+  hits: SearchHit[]
+  hasMore: boolean
+  code?: string
+  message?: string
+}
+
 /** apply 闭包投影给组件的能力。 */
 export interface ManagerFace {
   openSession(id: SessionId): ActionResult
@@ -50,6 +71,14 @@ export interface ManagerFace {
    * 而镜像是全局同一份，所以逐个试、命中即止。
    */
   readTrashMirror(ids: readonly SessionId[]): Promise<MirrorReadResult>
+  /**
+   * 搜索对话正文（走宿主已挂载的内容索引 Remote）。
+   *
+   * 注意：DSH 的全文索引是 opt-in 的（组合包默认 `openAt: never`）。索引没打开时
+   * 宿主会以 `SESSION_QUERY_SEARCH_DISABLED` 之类的错误拒绝——面板会如实显示这句话，
+   * 而不是假装"没有结果"。本插件的组合包 patch 会把索引打开，见 README。
+   */
+  searchContent(query: string, signal: AbortSignal): Promise<SearchOutcome>
   /** 重新拉取会话列表基线，让已从磁盘删除的行从原生列表里消失（不必重连）。 */
   refreshSessions(): Promise<ActionResult>
 }
@@ -187,10 +216,35 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/**
+ * 在摘要片段里标出关键词。
+ *
+ * 为什么要有它：原生侧栏的搜索结果只把 snippet 原样渲染（见 ui-workspace 的
+ * `searchResultSnippet`），不标出命中位置；长摘要在 20 条列表里很难扫。
+ * 大小写不敏感、不区分全半角（按码元直接匹配，与宿主"字面匹配"的语义一致）。
+ */
+function highlightSnippet(text: string, query: string): ReactNode {
+  if (query === '') return text
+  const haystack = text.toLowerCase()
+  const needle = query.toLowerCase()
+  const parts: ReactNode[] = []
+  let from = 0
+  let key = 0
+  for (;;) {
+    const at = haystack.indexOf(needle, from)
+    if (at < 0) break
+    if (at > from) parts.push(text.slice(from, at))
+    parts.push(<mark className="dshm-mark" key={`hit-${key++}`}>{text.slice(at, at + needle.length)}</mark>)
+    from = at + needle.length
+  }
+  if (from < text.length) parts.push(text.slice(from))
+  return parts
+}
+
 export function ManagerBody(props: ManagerProps) {
   const {
     t, useSessions, useSessionStatus, useWorkspaces, useSession,
-    openSession, setArchived, readTrashMirror, refreshSessions,
+    openSession, setArchived, readTrashMirror, refreshSessions, searchContent,
   } = props
 
   const listState = useSessions((s: unknown) => s) as unknown as SessionListSnapshot
@@ -223,6 +277,16 @@ export function ManagerBody(props: ManagerProps) {
   const [trash, setTrash] = useState<TrashMirror | null>(null)
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
+
+  /* ── 正文搜索 ──
+   * 与原生侧栏搜索的关系（README 有完整说明）：原生**也能搜正文**，但它把结果截到 20 个会话、
+   * 摘要不标关键词、结果不能复制。面板这版补的是这三样，并且就地搜索、不用切到侧栏。 */
+  const [query, setQuery] = useState('')
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [hits, setHits] = useState<SearchHit[]>([])
+  const [hitsHasMore, setHitsHasMore] = useState(false)
+  const [searchError, setSearchError] = useState<{ code?: string; message?: string } | null>(null)
+  const trimmedQuery = query.trim()
 
   /* 时间滴答：每 30s 刷新相对时间与"几天前"的判定。 */
   useEffect(() => {
@@ -314,6 +378,61 @@ export function ManagerBody(props: ManagerProps) {
     void refreshSessions()
     // 只在会话目录出现或页签会话变化时自动执行；其余时机靠「刷新」按钮。
   }, [sessionId, listState?.ids?.length])
+
+  /* 正文搜索：250ms 防抖 + 取消上一次请求（与原生侧栏同一节奏）。 */
+  useEffect(() => {
+    if (trimmedQuery === '') {
+      setHits([])
+      setHitsHasMore(false)
+      setSearchError(null)
+      setSearchBusy(false)
+      return
+    }
+    const controller = new AbortController()
+    setSearchBusy(true)
+    const timer = setTimeout(() => {
+      void (async () => {
+        const outcome = await searchContent(trimmedQuery, controller.signal)
+        if (controller.signal.aborted) return
+        setSearchBusy(false)
+        if (!outcome.ok) {
+          setHits([])
+          setHitsHasMore(false)
+          setSearchError({ code: outcome.code, message: outcome.message })
+          return
+        }
+        setSearchError(null)
+        setHits(outcome.hits)
+        setHitsHasMore(outcome.hasMore)
+      })()
+    }, 250)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [trimmedQuery])
+
+  /** 命中行：宿主只回 `{sessionId, snippet}`，其余用本地会话目录补齐。 */
+  const hitRows = useMemo(() => hits.map((hit) => {
+    const row = listState?.byId?.[hit.sessionId]
+    return {
+      id: hit.sessionId,
+      title: row === undefined ? hit.sessionId : (row.displayTitle || row.id),
+      workspace: workspaceTitleOf(hit.sessionId),
+      archived: archivedSet.has(hit.sessionId),
+      snippet: hit.snippet,
+    }
+  }), [hits, listState, archivedSet, workspaceOf])
+
+  const copyHits = async () => {
+    const lines = hitRows.map((row) => {
+      const head = `- ${row.title}（${row.workspace}${row.archived ? ' · 已归档' : ''}）`
+      return row.snippet === undefined ? head : `${head}\n  ${row.snippet}`
+    })
+    const text = [`搜索「${trimmedQuery}」命中 ${hitRows.length} 个对话：`, ...lines].join('\n')
+    const ok = await copyText(text)
+    showNotice(ok ? t('copiedHitsHint', { count: hitRows.length }) : t('copyFailed'))
+  }
 
   /* 行汇总：非空白、非 subagent；再套一层时间筛选。 */
   const rows = useMemo(() => {
@@ -445,6 +564,21 @@ export function ManagerBody(props: ManagerProps) {
     <div className="dshm-root">
       <div className="dshm-toolbar">
         <div className="dshm-toolbar__row">
+          <input
+            className="dshm-search"
+            type="search"
+            value={query}
+            placeholder={t('searchPlaceholder')}
+            title={t('searchHint')}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {trimmedQuery !== '' && (
+            <button className="dshm-btn dshm-btn--ghost" onClick={() => setQuery('')}>
+              {t('searchClear')}
+            </button>
+          )}
+        </div>
+        <div className="dshm-toolbar__row">
           <span className="dshm-badge">
             {t('statsLine', { count: stats.total, running: stats.running, archived: stats.archived })}
           </span>
@@ -485,7 +619,53 @@ export function ManagerBody(props: ManagerProps) {
       </div>
 
       <div className="dshm-list">
-        {rows.length === 0 ? (
+        {trimmedQuery !== '' ? (
+          /* 搜索结果：就地替换表格（与原生侧栏同一交互），并补上高亮/复制/计数。 */
+          searchBusy && hits.length === 0 ? (
+            <div className="dshm-empty">{t('loading')}</div>
+          ) : searchError !== null ? (
+            <div className="dshm-empty">
+              {t('searchFailed', { message: searchError.message ?? searchError.code ?? '' })}
+              <div className="dshm-hint">{t('searchDisabledHint')}</div>
+            </div>
+          ) : hitRows.length === 0 ? (
+            <div className="dshm-empty">{t('searchNoHits')}</div>
+          ) : (
+            <>
+              <div className="dshm-toolbar__row dshm-toolbar__row--pad">
+                <span className="dshm-badge">{t('searchHits', { count: hitRows.length })}</span>
+                {hitsHasMore && <span className="dshm-hint dshm-hint--inline">{t('searchMore')}</span>}
+                <button className="dshm-btn dshm-btn--ghost" onClick={() => { void copyHits() }}>
+                  {t('searchCopy')}
+                </button>
+              </div>
+              <ul className="dshm-hits">
+                {hitRows.map((row) => (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      className="dshm-hit"
+                      onClick={() => {
+                        const res = openSession(row.id)
+                        if (!res.ok) showNotice(t('actionFailedToast', { message: res.message ?? '' }))
+                      }}
+                    >
+                      <span className="dshm-hit__head">
+                        <StatusDot status={statusMap.get(row.id)} label={t('statusIdle')} />
+                        <span className="dshm-hit__title">{row.title}</span>
+                        <span className="dshm-hit__meta">{row.workspace}</span>
+                        {row.archived && <span className="dshm-badge dshm-badge--inline">{t('archivedBadge')}</span>}
+                      </span>
+                      {row.snippet !== undefined && (
+                        <span className="dshm-hit__snippet">{highlightSnippet(row.snippet, trimmedQuery)}</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        ) : rows.length === 0 ? (
           <div className="dshm-empty">{listState?.phase !== 'ready' ? t('loading') : t('empty')}</div>
         ) : (
           <table className="dshm-table">

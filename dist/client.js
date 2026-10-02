@@ -63,6 +63,16 @@ window.__ModuleLoader__.load({
 			pasteHint: "Paste it into the input box and send.",
 			copiedDeleteHint: "Copied the delete instruction for {count} conversation(s).",
 			copiedRestoreHint: "Copied the restore instruction.",
+			searchPlaceholder: "Search conversation text…",
+			searchHint: "Search conversation bodies through the DSH content index (the index must be enabled).",
+			searchClear: "Clear",
+			searchHits: "{count} conversation(s) matched",
+			searchMore: "More matches exist — try a more specific phrase",
+			searchNoHits: "No matching conversation",
+			searchFailed: "Search failed: {message}",
+			searchDisabledHint: "DSH full-text search is opt-in (the bundles ship openAt: never). This plugin's bundle patch turns it on; you can also override session-query-sqlite's openAt in the profile cordis.patch.yml.",
+			searchCopy: "Copy results",
+			copiedHitsHint: "Copied {count} search result(s).",
 			purgeBin: "Empty recycle bin",
 			purgeHint: "Permanently erases every batch — this cannot be undone.",
 			copiedPurgeHint: "Copied the instruction to permanently erase {count} batch(es).",
@@ -122,6 +132,16 @@ window.__ModuleLoader__.load({
 			pasteHint: "粘贴到输入框发送。",
 			copiedDeleteHint: "已复制 {count} 个对话的删除指令。",
 			copiedRestoreHint: "已复制恢复指令。",
+			searchPlaceholder: "搜索对话正文…",
+			searchHint: "搜索对话正文（走 DSH 的内容索引；索引需要已打开）",
+			searchClear: "清除",
+			searchHits: "命中 {count} 个对话",
+			searchMore: "还有更多命中，建议用更具体的关键词",
+			searchNoHits: "没有匹配的对话",
+			searchFailed: "搜索失败：{message}",
+			searchDisabledHint: "DSH 的全文索引默认关闭（组合包给的是 openAt: never）。本插件的组合包 patch 会打开它；也可以在 profile 的 cordis.patch.yml 里自行覆盖 session-query-sqlite 的 openAt。",
+			searchCopy: "复制结果",
+			copiedHitsHint: "已复制 {count} 条搜索结果。",
 			purgeBin: "清空回收站",
 			purgeHint: "永久删除全部批次——不可恢复。",
 			copiedPurgeHint: "已复制清空指令（{count} 批，永久删除、不可恢复）。",
@@ -189,6 +209,87 @@ window.__ModuleLoader__.load({
 .dshm-select {
   width: auto;
   cursor: pointer;
+}
+/* 正文搜索框：占满一行，与工具条里其它控件同高。 */
+.dshm-search {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.dshm-search:focus {
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.dshm-toolbar__row--pad {
+  padding: 6px 12px;
+}
+/* 命中列表：每条是一个可点按钮（点击打开该对话）。 */
+.dshm-hits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dshm-hit {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dshm-hit:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.dshm-hit__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dshm-hit__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dshm-hit__meta {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: color-mix(in srgb, currentColor 60%, transparent);
+}
+.dshm-hit__snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 17px;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+}
+/* 命中关键词的高亮（原生摘要不标，这是本面板的补强之一）。 */
+.dshm-mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  color: inherit;
 }
 .dshm-btn {
   display: inline-flex;
@@ -502,8 +603,35 @@ window.__ModuleLoader__.load({
 				return false;
 			}
 		}
+		/**
+		* 在摘要片段里标出关键词。
+		*
+		* 为什么要有它：原生侧栏的搜索结果只把 snippet 原样渲染（见 ui-workspace 的
+		* `searchResultSnippet`），不标出命中位置；长摘要在 20 条列表里很难扫。
+		* 大小写不敏感、不区分全半角（按码元直接匹配，与宿主"字面匹配"的语义一致）。
+		*/
+		function highlightSnippet(text, query) {
+			if (query === "") return text;
+			const haystack = text.toLowerCase();
+			const needle = query.toLowerCase();
+			const parts = [];
+			let from = 0;
+			let key = 0;
+			for (;;) {
+				const at = haystack.indexOf(needle, from);
+				if (at < 0) break;
+				if (at > from) parts.push(text.slice(from, at));
+				parts.push(/* @__PURE__ */ (0, react_jsx_runtime.jsx)("mark", {
+					className: "dshm-mark",
+					children: text.slice(at, at + needle.length)
+				}, `hit-${key++}`));
+				from = at + needle.length;
+			}
+			if (from < text.length) parts.push(text.slice(from));
+			return parts;
+		}
 		function ManagerBody(props) {
-			const { t, useSessions, useSessionStatus, useWorkspaces, useSession, openSession, setArchived, readTrashMirror, refreshSessions } = props;
+			const { t, useSessions, useSessionStatus, useWorkspaces, useSession, openSession, setArchived, readTrashMirror, refreshSessions, searchContent } = props;
 			const listState = useSessions((s) => s);
 			const statusMap = useSessionStatus((s) => s);
 			const workspaces = useWorkspaces((w) => w);
@@ -528,6 +656,12 @@ window.__ModuleLoader__.load({
 			const [trash, setTrash] = (0, react.useState)(null);
 			const [trashError, setTrashError] = (0, react.useState)(null);
 			const [trashBusy, setTrashBusy] = (0, react.useState)(false);
+			const [query, setQuery] = (0, react.useState)("");
+			const [searchBusy, setSearchBusy] = (0, react.useState)(false);
+			const [hits, setHits] = (0, react.useState)([]);
+			const [hitsHasMore, setHitsHasMore] = (0, react.useState)(false);
+			const [searchError, setSearchError] = (0, react.useState)(null);
+			const trimmedQuery = query.trim();
 			(0, react.useEffect)(() => {
 				const timer = setInterval(() => setNow(Date.now()), 3e4);
 				return () => clearInterval(timer);
@@ -607,6 +741,64 @@ window.__ModuleLoader__.load({
 				loadTrash();
 				refreshSessions();
 			}, [sessionId, listState?.ids?.length]);
+			(0, react.useEffect)(() => {
+				if (trimmedQuery === "") {
+					setHits([]);
+					setHitsHasMore(false);
+					setSearchError(null);
+					setSearchBusy(false);
+					return;
+				}
+				const controller = new AbortController();
+				setSearchBusy(true);
+				const timer = setTimeout(() => {
+					(async () => {
+						const outcome = await searchContent(trimmedQuery, controller.signal);
+						if (controller.signal.aborted) return;
+						setSearchBusy(false);
+						if (!outcome.ok) {
+							setHits([]);
+							setHitsHasMore(false);
+							setSearchError({
+								code: outcome.code,
+								message: outcome.message
+							});
+							return;
+						}
+						setSearchError(null);
+						setHits(outcome.hits);
+						setHitsHasMore(outcome.hasMore);
+					})();
+				}, 250);
+				return () => {
+					clearTimeout(timer);
+					controller.abort();
+				};
+			}, [trimmedQuery]);
+			/** 命中行：宿主只回 `{sessionId, snippet}`，其余用本地会话目录补齐。 */
+			const hitRows = (0, react.useMemo)(() => hits.map((hit) => {
+				const row = listState?.byId?.[hit.sessionId];
+				return {
+					id: hit.sessionId,
+					title: row === void 0 ? hit.sessionId : row.displayTitle || row.id,
+					workspace: workspaceTitleOf(hit.sessionId),
+					archived: archivedSet.has(hit.sessionId),
+					snippet: hit.snippet
+				};
+			}), [
+				hits,
+				listState,
+				archivedSet,
+				workspaceOf
+			]);
+			const copyHits = async () => {
+				const lines = hitRows.map((row) => {
+					const head = `- ${row.title}（${row.workspace}${row.archived ? " · 已归档" : ""}）`;
+					return row.snippet === void 0 ? head : `${head}\n  ${row.snippet}`;
+				});
+				const ok = await copyText([`搜索「${trimmedQuery}」命中 ${hitRows.length} 个对话：`, ...lines].join("\n"));
+				showNotice(ok ? t("copiedHitsHint", { count: hitRows.length }) : t("copyFailed"));
+			};
 			const rows = (0, react.useMemo)(() => {
 				const byId = listState?.byId ?? {};
 				const ids = listState?.ids ?? [];
@@ -716,93 +908,176 @@ window.__ModuleLoader__.load({
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: "dshm-toolbar",
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							className: "dshm-toolbar__row",
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: "dshm-badge",
-									children: t("statsLine", {
-										count: stats.total,
-										running: stats.running,
-										archived: stats.archived
-									})
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
-									className: "dshm-select",
-									value: String(olderThan),
-									onChange: (event) => setOlderThan(Number(event.target.value)),
-									title: t("timeFilterHint"),
-									children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
-											value: "0",
-											children: t("filterAll")
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
-											value: "7",
-											children: t("filterOlder7")
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
-											value: "30",
-											children: t("filterOlder30")
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
-											value: "90",
-											children: t("filterOlder90")
-										})
-									]
-								}),
-								olderThan !== 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: "dshm-badge",
-									children: t("filteredCount", { count: rows.length })
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-									className: "dshm-toggle",
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-										type: "checkbox",
-										checked: allChecked,
-										onChange: toggleAll
-									}), t("selectAll")]
-								})
-							]
-						}), selectedCount > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							className: "dshm-toolbar__row",
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: "dshm-badge",
-									children: t("selectedCount", { count: selectedCount })
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-									className: "dshm-btn",
-									onClick: () => {
-										archiveMany([...selected], true);
-									},
-									children: t("archive")
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-									className: "dshm-btn",
-									onClick: () => {
-										archiveMany([...selected], false);
-									},
-									children: t("unarchive")
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-									className: "dshm-btn dshm-btn--danger",
-									onClick: () => {
-										copyDeleteInstruction();
-									},
-									children: t("deleteSelected")
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: "dshm-toolbar__row",
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									className: "dshm-search",
+									type: "search",
+									value: query,
+									placeholder: t("searchPlaceholder"),
+									title: t("searchHint"),
+									onChange: (event) => setQuery(event.target.value)
+								}), trimmedQuery !== "" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 									className: "dshm-btn dshm-btn--ghost",
-									onClick: () => setSelected(/* @__PURE__ */ new Set()),
-									children: t("clearSelection")
-								})
-							]
-						})]
+									onClick: () => setQuery(""),
+									children: t("searchClear")
+								})]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: "dshm-toolbar__row",
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: "dshm-badge",
+										children: t("statsLine", {
+											count: stats.total,
+											running: stats.running,
+											archived: stats.archived
+										})
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+										className: "dshm-select",
+										value: String(olderThan),
+										onChange: (event) => setOlderThan(Number(event.target.value)),
+										title: t("timeFilterHint"),
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "0",
+												children: t("filterAll")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "7",
+												children: t("filterOlder7")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "30",
+												children: t("filterOlder30")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "90",
+												children: t("filterOlder90")
+											})
+										]
+									}),
+									olderThan !== 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: "dshm-badge",
+										children: t("filteredCount", { count: rows.length })
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+										className: "dshm-toggle",
+										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+											type: "checkbox",
+											checked: allChecked,
+											onChange: toggleAll
+										}), t("selectAll")]
+									})
+								]
+							}),
+							selectedCount > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: "dshm-toolbar__row",
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: "dshm-badge",
+										children: t("selectedCount", { count: selectedCount })
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										className: "dshm-btn",
+										onClick: () => {
+											archiveMany([...selected], true);
+										},
+										children: t("archive")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										className: "dshm-btn",
+										onClick: () => {
+											archiveMany([...selected], false);
+										},
+										children: t("unarchive")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										className: "dshm-btn dshm-btn--danger",
+										onClick: () => {
+											copyDeleteInstruction();
+										},
+										children: t("deleteSelected")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										className: "dshm-btn dshm-btn--ghost",
+										onClick: () => setSelected(/* @__PURE__ */ new Set()),
+										children: t("clearSelection")
+									})
+								]
+							})
+						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: "dshm-list",
-						children: rows.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						children: trimmedQuery !== "" ? searchBusy && hits.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: "dshm-empty",
+							children: t("loading")
+						}) : searchError !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: "dshm-empty",
+							children: [t("searchFailed", { message: searchError.message ?? searchError.code ?? "" }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: "dshm-hint",
+								children: t("searchDisabledHint")
+							})]
+						}) : hitRows.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: "dshm-empty",
+							children: t("searchNoHits")
+						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: "dshm-toolbar__row dshm-toolbar__row--pad",
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: "dshm-badge",
+									children: t("searchHits", { count: hitRows.length })
+								}),
+								hitsHasMore && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: "dshm-hint dshm-hint--inline",
+									children: t("searchMore")
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									className: "dshm-btn dshm-btn--ghost",
+									onClick: () => {
+										copyHits();
+									},
+									children: t("searchCopy")
+								})
+							]
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+							className: "dshm-hits",
+							children: hitRows.map((row) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: "dshm-hit",
+								onClick: () => {
+									const res = openSession(row.id);
+									if (!res.ok) showNotice(t("actionFailedToast", { message: res.message ?? "" }));
+								},
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									className: "dshm-hit__head",
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(StatusDot, {
+											status: statusMap.get(row.id),
+											label: t("statusIdle")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: "dshm-hit__title",
+											children: row.title
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: "dshm-hit__meta",
+											children: row.workspace
+										}),
+										row.archived && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: "dshm-badge dshm-badge--inline",
+											children: t("archivedBadge")
+										})
+									]
+								}), row.snippet !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: "dshm-hit__snippet",
+									children: highlightSnippet(row.snippet, trimmedQuery)
+								})]
+							}) }, row.id))
+						})] }) : rows.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: "dshm-empty",
 							children: listState?.phase !== "ready" ? t("loading") : t("empty")
 						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
@@ -1129,6 +1404,52 @@ window.__ModuleLoader__.load({
 						return { ok: true };
 					} catch (error) {
 						return fail(error);
+					}
+				},
+				/**
+				* 搜索对话正文（宿主的内容索引）。
+				*
+				* 只走同一个 Remote：`sessions.search(query, signal)` → `remote.session.search({ query }, signal)`。
+				* 宿主每条只回 `{ sessionId, snippet }`（snippet 截到 240 码点），并且**服务端就截到 20 个会话**
+				* ——`hasMore` 表示"还有更多会话匹配"，不是分页游标。这些是从宿主实现里读出来的，所以面板
+				* 不去承诺"显示超过 20 条"。
+				*
+				* 索引没打开时宿主会抛错（`SESSION_QUERY_SEARCH_DISABLED` 之类），面板原样显示——
+				* 那种情况下"没有结果"是假象，必须让用户看到真实原因。
+				*/
+				async searchContent(query, signal) {
+					const clean = query.trim();
+					if (clean === "") return {
+						ok: true,
+						hits: [],
+						hasMore: false
+					};
+					try {
+						const result = await sessions.search(clean, signal);
+						if (!result?.ok) return {
+							ok: false,
+							hits: [],
+							hasMore: false,
+							code: result?.error?.code,
+							message: result?.error?.message ?? "search failed"
+						};
+						return {
+							ok: true,
+							hits: (result.value?.items ?? []).map((item) => ({
+								sessionId: String(item?.sessionId ?? ""),
+								snippet: typeof item?.snippet === "string" ? String(item.snippet) : void 0
+							})).filter((hit) => hit.sessionId !== ""),
+							hasMore: result.value?.hasMore === true
+						};
+					} catch (error) {
+						const failure = fail(error);
+						return {
+							ok: false,
+							hits: [],
+							hasMore: false,
+							code: failure.code,
+							message: failure.message
+						};
 					}
 				},
 				/**

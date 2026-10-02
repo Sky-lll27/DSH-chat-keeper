@@ -167,6 +167,44 @@ check('正文组件是函数', typeof bodySlot?.component === 'function')
 const menuSlot = recorded.slots.find(s => s.registration.name === 'sidebar.workspaces.session.menu.item')
 check('菜单项有 id 与数字 order', typeof menuSlot?.registration.id === 'string' && typeof menuSlot?.registration.order === 'number')
 
+/* inject face：注册项把它投影给组件的能力。这里用桩服务真的跑一遍，
+ * 验证"宿主只回 {sessionId, snippet} → 面板补齐"这条契约没有被写错。 */
+const face = bodySlot?.registration.inject?.()
+check('正文 slot 提供 inject face', face !== undefined && typeof face === 'object')
+check('face 暴露搜索、打开、归档、刷新、读镜像', face !== undefined
+  && typeof face.searchContent === 'function'
+  && typeof face.openSession === 'function'
+  && typeof face.setArchived === 'function'
+  && typeof face.refreshSessions === 'function'
+  && typeof face.readTrashMirror === 'function')
+
+sessionsStub.search = async () => ({
+  ok: true,
+  value: { items: [{ sessionId: 's-1', snippet: '命中的一句话' }, { sessionId: 's-2' }, { snippet: '没有 id 应被丢弃' }], hasMore: true },
+})
+const searched = face === undefined ? undefined : await face.searchContent('  插件  ', new AbortController().signal)
+check('搜索把宿主返回映射成命中（丢弃缺 sessionId 的条目）', searched?.ok === true
+  && searched.hits.length === 2
+  && searched.hits[0].sessionId === 's-1'
+  && searched.hits[0].snippet === '命中的一句话'
+  && searched.hits[1].snippet === undefined
+  && searched.hasMore === true, JSON.stringify(searched))
+
+let calledWith
+sessionsStub.search = async (query) => { calledWith = query; return { ok: true, value: { items: [], hasMore: false } } }
+await face.searchContent('  前后空格  ', new AbortController().signal)
+check('搜索前会 trim 查询词（宿主拒绝空白查询）', calledWith === '前后空格', String(calledWith))
+
+sessionsStub.search = async () => ({ ok: false, error: { code: 'SESSION_QUERY_SEARCH_DISABLED', message: 'search is disabled' } })
+const disabled = await face.searchContent('任意', new AbortController().signal)
+check('索引关闭时如实回传错误码（不能假装"没有结果"）', disabled.ok === false
+  && disabled.code === 'SESSION_QUERY_SEARCH_DISABLED'
+  && disabled.message === 'search is disabled', JSON.stringify(disabled))
+
+sessionsStub.search = async () => ({ ok: true, value: { items: [{ sessionId: 's-3' }], hasMore: false } })
+const blank = await face.searchContent('   ', new AbortController().signal)
+check('空白查询不发请求（直接回空）', blank.ok === true && blank.hits.length === 0)
+
 check('注册了 locale 字典', recorded.locales.length === 1)
 const dicts = recorded.locales[0]?.dicts
 check('字典同时含 en 与 zh', dicts !== undefined && dicts.en !== undefined && dicts.zh !== undefined)

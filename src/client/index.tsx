@@ -35,7 +35,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { en, NS, zh } from './locale.ts'
 import { installStyles, removeStyles } from './styles.ts'
-import { ManagerBody, TRASH_MIRROR_PATH, type ActionResult, type ManagerFace, type MirrorReadResult } from './manager.tsx'
+import { ManagerBody, TRASH_MIRROR_PATH, type ActionResult, type ManagerFace, type MirrorReadResult, type SearchOutcome } from './manager.tsx'
 
 export const name = 'dsh-conversation-manager'
 
@@ -250,6 +250,43 @@ function applyInner(ctx: Context): void {
         return { ok: true }
       } catch (error) {
         return fail(error)
+      }
+    },
+    /**
+     * 搜索对话正文（宿主的内容索引）。
+     *
+     * 只走同一个 Remote：`sessions.search(query, signal)` → `remote.session.search({ query }, signal)`。
+     * 宿主每条只回 `{ sessionId, snippet }`（snippet 截到 240 码点），并且**服务端就截到 20 个会话**
+     * ——`hasMore` 表示"还有更多会话匹配"，不是分页游标。这些是从宿主实现里读出来的，所以面板
+     * 不去承诺"显示超过 20 条"。
+     *
+     * 索引没打开时宿主会抛错（`SESSION_QUERY_SEARCH_DISABLED` 之类），面板原样显示——
+     * 那种情况下"没有结果"是假象，必须让用户看到真实原因。
+     */
+    async searchContent(query: string, signal: AbortSignal): Promise<SearchOutcome> {
+      const clean = query.trim()
+      if (clean === '') return { ok: true, hits: [], hasMore: false }
+      try {
+        const result = await sessions.search(clean, signal)
+        if (!result?.ok) {
+          return {
+            ok: false,
+            hits: [],
+            hasMore: false,
+            code: result?.error?.code,
+            message: result?.error?.message ?? 'search failed',
+          }
+        }
+        const hits = (result.value?.items ?? []).map(item => ({
+          sessionId: String((item as { sessionId?: unknown })?.sessionId ?? ''),
+          snippet: typeof (item as { snippet?: unknown })?.snippet === 'string'
+            ? String((item as { snippet?: string }).snippet)
+            : undefined,
+        })).filter(hit => hit.sessionId !== '')
+        return { ok: true, hits, hasMore: result.value?.hasMore === true }
+      } catch (error) {
+        const failure = fail(error)
+        return { ok: false, hits: [], hasMore: false, code: failure.code, message: failure.message }
       }
     },
     /**

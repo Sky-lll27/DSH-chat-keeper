@@ -9,3 +9,23 @@
 - insert:
     - id: conversation-manager
       name: 'dsh-conversation-manager'
+
+# 打开 DSH 的正文搜索（全文索引）。
+#
+# 背景：DSH 的全文搜索是 opt-in —— dsh-base 与 dsh-web-app 两个组合包都把
+# session-query-sqlite 设为 `openAt: never`，此时 ctx.sessionQuery 虽挂着，
+# 但搜索一调用就失败（SESSION_QUERY_SEARCH_DISABLED），于是侧栏搜索只匹配
+# “标题 + 工作区名”。官方注释给了开法：在更靠后的 patch 层把 openAt 覆盖成
+# first-search（或 startup），通常再给一个持久化路径。
+#
+# 本行就是那个覆盖：面板里的正文搜索依赖它，所以你装了本插件就会同时获得
+# DSH 原生的正文搜索能力。索引在“第一次搜索”时才打开，不拖慢启动；
+# 数据库是派生数据，删掉它会自动重建。
+#
+# 不想要的话：删掉下面这一段（或把 openAt 改回 never），面板会如实显示
+# “搜索失败：…disabled…”，其余功能不受影响。
+- id: session-query-sqlite
+  name: '@deepseek-ai/dsh-session-query-sqlite'
+  config:
+    path: ':memory:'
+    openAt: first-search

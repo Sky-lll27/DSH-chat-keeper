@@ -61,6 +61,87 @@ export const CSS = `
   width: auto;
   cursor: pointer;
 }
+/* 正文搜索框：占满一行，与工具条里其它控件同高。 */
+.dshm-search {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.dshm-search:focus {
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.dshm-toolbar__row--pad {
+  padding: 6px 12px;
+}
+/* 命中列表：每条是一个可点按钮（点击打开该对话）。 */
+.dshm-hits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dshm-hit {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dshm-hit:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.dshm-hit__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dshm-hit__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dshm-hit__meta {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: color-mix(in srgb, currentColor 60%, transparent);
+}
+.dshm-hit__snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 17px;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+}
+/* 命中关键词的高亮（原生摘要不标，这是本面板的补强之一）。 */
+.dshm-mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  color: inherit;
+}
 .dshm-btn {
   display: inline-flex;
   align-items: center;
