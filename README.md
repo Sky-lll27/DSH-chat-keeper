@@ -1,13 +1,18 @@
-# DSH-conversation-manager
+# DSH-chat-keeper
 
-[![CI](https://github.com/Sky-lll27/DSH-conversation-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/Sky-lll27/DSH-conversation-manager/actions/workflows/ci.yml)
+[![CI](https://github.com/Sky-lll27/DSH-chat-keeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Sky-lll27/DSH-chat-keeper/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-> 仓库名是 `DSH-conversation-manager`；**npm 包名必须全小写**，所以包名是
-> `dsh-conversation-manager` —— 两者指同一个插件。
+> **仓库名**：`DSH-chat-keeper`（原 `DSH-conversation-manager`，旧地址会自动跳转）。
+> **包名**：仍是 `dsh-conversation-manager` —— npm 包名必须全小写，而且已安装的用户是靠包名关联的，
+> 改包名会让他们失联，所以仓库名与包名在这里故意不一致。
 
-一个真正接入 **DeepSeek Harness（DSH）** 插件体系的对话管理器。它补齐了 DSH 界面缺失的那部分：
-**跨工作区盘点**、**批量处理**，以及 DSH 本身没有的 —— **删除对话（回收站式，可恢复）**。
+一个真正接入 **DeepSeek Harness（DSH）** 插件体系的对话管家。它补齐了 DSH 界面缺失的那部分：
+**跨工作区盘点**、**正文搜索**、**批量处理**，以及 DSH 本身没有的 —— **删除对话（回收站式，可恢复）**。
+
+其中搜索是最常被问到的：DSH 的正文索引**默认是关的**（组合包给的是 `openAt: never`），
+打开后中文又只认"整段"。本插件替你打开索引，并额外提供一条**读磁盘**的通道 ——
+中文子串能搜、**没打开过的旧对话也能搜**、还能**定位到命中那句并把前后文读出来**。
 
 > 第三方社区插件，与 DeepSeek 官方无关。代码由作者与 AI 助手协作完成，
 > 详见文末「关于作者与 AI 协作」一节。
@@ -38,13 +43,13 @@ DSH 自带的侧栏已经能搜索、置顶、改名、分叉、归档 —— �
 在 DSH 的**插件**页面里安装本仓库地址：
 
 ```
-https://github.com/Sky-lll27/DSH-conversation-manager
+https://github.com/Sky-lll27/DSH-chat-keeper
 ```
 
 或在命令行：
 
 ```sh
-dsh plugin --profile <你的 profile> add https://github.com/Sky-lll27/DSH-conversation-manager
+dsh plugin --profile <你的 profile> add https://github.com/Sky-lll27/DSH-chat-keeper
 ```
 
 装好后**重启 DSH**（宿主插件树在启动时装配）。
@@ -287,7 +292,7 @@ pnpm run check:dist     # 重新构建后检查产物与提交的一致（CI 会
 - **不要用 `git+https://…` 这种带前缀的写法**：pnpm 会把 GitHub 的 `git+https` 地址规范化成 ssh
   （`git+ssh://git@github.com/…`），没配 SSH 密钥就会失败（`git ls-remote ... exit 128`）。
   用**不带前缀的普通 https 地址**即可：
-  `https://github.com/Sky-lll27/DSH-conversation-manager.git`
+  `https://github.com/Sky-lll27/DSH-chat-keeper.git`
 - **已经用本地目录装过、想改成 git 版时，先卸载再装**：本地目录安装是 `link:`
   （Windows 上是目录联接 junction），pnpm 试图"原地改名替换"会被系统拒绝
   （`EPERM ... rename ... _tmp_… -> dsh-conversation-manager`）。
