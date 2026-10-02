@@ -190,7 +190,7 @@ dsh --profile web
 `clientModules` 再从本包 `package.json` 的 `dsh.client` 声明找到 `dist/client.js` 组进 Web 启动图。
 所以**先按上面的前置步骤构建一次**；`pnpm install` 在本包目录执行时会经 `prepare` 自动跑 tsdown。
 
-> 若改成从 git 安装（`dsh plugin ... add github:you/dsh-conversation-manager`），
+> 若改成从 git 安装（`dsh plugin ... add github:you/dsh-chat-keeper`），
 > pnpm ≥10 默认拒绝运行依赖的 `prepare`，第一次 `add` 会失败。按 pnpm 打印的包键，
 > 在该 profile 的 `pnpm-workspace.yaml` 里加：
 >
@@ -267,7 +267,7 @@ git init
 git add .
 git commit -m "feat: DSH conversation manager (browser panel + disk-level delete with recycle bin)"
 git branch -M main
-git remote add origin https://github.com/YOUR-GITHUB-USER/dsh-conversation-manager.git
+git remote add origin https://github.com/YOUR-GITHUB-USER/dsh-chat-keeper.git
 git push -u origin main
 ```
 
