@@ -605,7 +605,7 @@ check('像 DSH home 的目录会被采纳，且注入值优先于环境变量', 
 
 // ── 6. 磁盘清理：列出 / 删除（回收站）/ 恢复 ─────────────────────────────────
 // 注意：清理工具按 $DSH_HOME 定位真实数据，所以这里必须在「把 DSH_HOME 指向夹具」
-// 之后再 apply 一个独立 harness —— 否则它会去动真实的 $DSH_HOME。
+// 之后再 apply 一个独立 harness —— 否则它会去动开发者真实的 $DSH_HOME。
 console.log('\n磁盘清理（删除与恢复）')
 const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
 const fixture = [
@@ -633,7 +633,7 @@ const cleaner = createFakeCtx()
 apply(cleaner.ctx, {})
 // 让夹具里的 session-1 在本进程「存活」，用来验证删除会拒绝运行中的对话。
 const liveFixture = makeSession('session-1', [{ seq: 0, time: Date.now(), type: 'user/message', data: { content: [{ type: 'text', text: '我在运行中' }] } }])
-// 关键：把它的工作区指到临时目录，否则回收站镜像会写进真实的 开发者工作目录。
+// 关键：把它的工作区指到临时目录，否则回收站镜像会写进开发者真实的会话工作区。
 liveFixture.header.cwd = join(home, 'ws')
 cleaner.sessions.set(liveFixture.id, liveFixture)
 cleaner.fire('session/created', liveFixture)
