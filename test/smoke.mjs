@@ -469,6 +469,20 @@ await checkAsync('会话销毁后索引保留、历史不可读', async () => {
   assert.deepEqual(after.messages, [])
 })
 
+// 这条是 CI 抓出来的真 bug 的回归测试：磁盘回退必须与存活路径**同形状**。
+// 当年 CI（Linux，没有 ~/.dsh）上 `resolveDshHome` 解析不出 home，代码只回了 { error }，
+// 于是 available 是 undefined 而不是 false；本地因为 ~/.dsh 存在恰好走到"找不到对话"分支，
+// 返回了 available: false，所以本地一直绿——形状不一致才是根因。
+await checkAsync('磁盘回退无论何种失败原因，都保持 available/messages 的统一形状', async () => {
+  const missing = await run('conversation_history', { conversation_id: 'definitely-not-on-disk', from_disk: true })
+  assert.equal(missing.available, false, JSON.stringify(missing))
+  assert.deepEqual(missing.messages, [])
+  assert.equal(typeof missing.reason, 'string')
+  // 本地有 ~/.dsh（走到"磁盘上找不到该对话"），CI 没有（走到"解析不到 home"）——
+  // 两条都算合法失败路径，形状必须一致。
+  assert.ok(missing.source === 'disk' || missing.source === 'none', String(missing.source))
+})
+
 check('状态变化事件被广播', () =>
   assert.ok(harness.emitted.some((entry) => entry.event === 'conversation-manager/changed')),
 )
