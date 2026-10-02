@@ -1,8 +1,8 @@
 {
   "name": "dsh-conversation-manager",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
-  "description": "DeepSeek Harness 对话管理器：跨工作区总表、正文搜索（含高亮摘要与结果复制）、按时间批量归档，以及 DSH 界面没有的磁盘层面删除（回收站式，可恢复）。",
+  "description": "DeepSeek Harness 对话管理器：跨工作区总表、正文搜索（面板高亮摘要 / 工具支持中文子串与冷对话）、按时间批量归档，以及 DSH 界面没有的磁盘层面删除（回收站式，可恢复）。",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -39,7 +39,8 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
-  ],  "dsh": {
+  ],
+  "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
@@ -58,7 +59,7 @@
     }
   },
   "scripts": {
-    "check": "node --check index.js && node --check lib/events.js && node --check lib/conversations.js && node --check lib/tools.js && node --check lib/cleanup.js && node --check lib/trash-mirror.js",
+    "check": "node --check index.js && node --check lib/events.js && node --check lib/conversations.js && node --check lib/tools.js && node --check lib/cleanup.js && node --check lib/trash-mirror.js && node --check lib/log-read.js && node --check lib/search-disk.js",
     "test": "node test/smoke.mjs",
     "bundle": "tsdown",
     "watch": "tsdown --watch",

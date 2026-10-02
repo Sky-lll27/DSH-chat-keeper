@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { zstdCompressSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -352,14 +353,18 @@ check('reasoning 块不进摘要、file 块被标记（依据 ContentBlockMap �
   assert.match(assistant.text, /\[file\]/)
 })
 
-const search = await run('conversation_search', { query: '插件' })
+const search = await run('conversation_search', { query: '插件', scan_disk: false })
 check('conversation_search 命中正文并给出摘录', () => {
-  assert.equal(search.length, 1)
-  assert.ok(search[0].matches.length >= 1)
+  assert.equal(search.hits.length, 1, JSON.stringify(search).slice(0, 200))
+  assert.ok(search.hits[0].matches >= 1)
+  assert.equal(search.diagnostics.diskScanned, null, '关掉磁盘扫描时不应有磁盘统计')
 })
 
-const miss = await run('conversation_search', { query: '绝对不存在的关键字zzz' })
-check('搜索无结果时返回空数组', () => assert.deepEqual(miss, []))
+const miss = await run('conversation_search', { query: '绝对不存在的关键字zzz', scan_disk: false })
+check('搜索无结果时返回空命中', () => {
+  assert.deepEqual(miss.hits, [])
+  assert.equal(miss.returned, 0)
+})
 
 const stats = await run('conversation_stats')
 check('conversation_stats 汇总正确', () => {
@@ -703,6 +708,49 @@ check('all:true 清空全部批次并报出释放空间', () => {
   assert.equal(emptied.recycleBin.length, 0)
   assert.ok(!existsSync(join(home, 'session-trash')), '清空后回收站空壳目录也应被收掉')
 })
+
+/* ── 磁盘正文搜索（0.3.1 的核心）：中文子串必须能搜到 ──
+ * 自带内容索引跑在 FTS5 `unicode61` 上，把一整串连续中文当一个词元，
+ * 所以「内容检索示例」里的「检索」搜不到。这里造一份**两帧拼接**的真日志
+ * （DSH 追加写法的真实形态），验证多帧解压 + 字面子串匹配。 */
+const memoId = 'memo-zh-1'
+const memoDir = join(home, 'sessions', '--F--', memoId)
+mkdirSync(memoDir, { recursive: true })
+const memoFrames = [
+  JSON.stringify({ type: 'user/message', data: { content: [{ type: 'text', text: '这是一句内容检索示例，用来验证子串搜索' }] } }),
+  JSON.stringify({ type: 'assistant/message', data: { content: [{ type: 'text', text: '内容检索示例：子串必须能命中' }] } }),
+]
+writeFileSync(
+  join(memoDir, 'session.v4.jsonl.zstd'),
+  Buffer.concat(memoFrames.map(frame => zstdCompressSync(Buffer.from(`${frame}\n`, 'utf8')))),
+)
+
+const zh = await runClean('conversation_search', { query: '检索', limit: 5 })
+check('磁盘正文搜索：中文子串命中（自带 FTS 分词器做不到的事）', () => {
+  const hit = zh.hits.find(row => row.id === memoId)
+  assert.ok(hit, JSON.stringify(zh).slice(0, 400))
+  assert.equal(hit.matches, 2, '两帧里各出现一次')
+  assert.ok(String(hit.snippet).includes('检索'), String(hit.snippet))
+  assert.equal(hit.source, 'disk')
+})
+check('磁盘扫描如实报告规模与耗时', () => {
+  assert.ok(zh.diagnostics.diskScanned >= 1, JSON.stringify(zh.diagnostics))
+  assert.equal(typeof zh.diagnostics.diskElapsedMs, 'number')
+  assert.equal(zh.diagnostics.diskTimedOut, false)
+})
+// 内容不是 zstd 的日志（夹具里 session-1 是 'x'.repeat(128)）不会报错，只是解出 0 条事件
+// —— 残缺日志不该拖垮整次搜索。真正读不开的情况才进 unreadable，
+// 这里用"日志路径是个目录"构造一个确定性的读取失败。
+const badLogId = 'bad-log-1'
+mkdirSync(join(home, 'sessions', '--F--', badLogId, 'session.v4.jsonl.zstd'), { recursive: true })
+const zh2 = await runClean('conversation_search', { query: '检索', limit: 5 })
+check('读不开的日志进 unreadable，且不影响其它命中', () => {
+  assert.ok(Array.isArray(zh2.diagnostics.diskUnreadable), JSON.stringify(zh2.diagnostics))
+  assert.ok(zh2.diagnostics.diskUnreadable.some(item => item.id === badLogId), JSON.stringify(zh2.diagnostics.diskUnreadable))
+  assert.ok(zh2.hits.some(row => row.id === memoId), '其它对话的命中照常返回')
+})
+const zhNone = await runClean('conversation_search', { query: '绝对不存在的关键字zzz' })
+check('磁盘正文搜索无命中时返回空', () => assert.deepEqual(zhNone.hits, []))
 
 cleaner.disposeAll()
 if (previousHome === undefined) delete process.env.DSH_HOME
