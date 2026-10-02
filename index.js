@@ -28,6 +28,7 @@ import { ConversationIndex, sessionId as sessionIdOf, view } from './lib/convers
 import { registerConversationTools } from './lib/tools.js'
 import { refreshTrashMirrors } from './lib/trash-mirror.js'
 import { resolveDshHome } from './lib/cleanup.js'
+import { createCjkScanner, installCjkSearch } from './lib/search-cjk.js'
 import { isCoreEventType, safe } from './lib/events.js'
 
 /** 插件唯一标识。 */
@@ -59,6 +60,17 @@ const DEFAULTS = {
    * 不想让本插件往你的工程目录里写文件时，把它设为 false（面板会显示"镜像未开启"）。
    */
   trashMirror: true,
+  /**
+   * 中文查询的字面兜底：官方内容索引按词元匹配（分词器 `unicode61` 写死在建表语句里），
+   * 中文子串经常搜不到。开启后，查询含中日韩文字时本插件会**额外**读磁盘做一次
+   * 字面子串扫描并把命中合并进结果；纯英文查询完全不走这条路，行为与从前一致。
+   * 设为 false 就彻底交还给官方索引。
+   */
+  cjkSearch: true,
+  /** 兜底扫描的时间预算（毫秒）。扫描是同步读日志，预算越大界面可能顿得越久。 */
+  cjkSearchBudgetMs: 2000,
+  /** 兜底扫描最多读几个对话（按最近活动倒序，先搜最可能相关的）。 */
+  cjkSearchMaxConversations: 120,
 }
 
 /**
@@ -213,6 +225,42 @@ export function apply(ctx, config) {
   )
   ctx.effect(() => () => persistence.flush())
 
+  // ── 中文查询的字面兜底 ────────────────────────────────────────────────────
+  // 官方索引搜不到中文子串，所以把宿主的 `sessions.search` 包一层：查询含 CJK 时
+  // 额外扫一遍磁盘、把命中合并进去。官方放大镜与本插件面板走的是同一个方法，
+  // 因此两处一起受益；英文查询不触发扫描，错误语义也完全不变（详见 lib/search-cjk.js）。
+  // 自检账本：`calls` 只记**真正读了磁盘**的次数，`cacheHits` 记复用上次结果的次数。
+  const cjkDiag = {
+    installed: false,
+    reason: 'not-started',
+    calls: 0,
+    cacheHits: 0,
+    added: 0,
+    lastElapsedMs: null,
+  }
+  const cjk = settings.cjkSearch === false
+    ? { installed: false, reason: 'disabled', restore: () => {} }
+    : installCjkSearch(sessions, {
+        scan: createCjkScanner({
+          budgetMs: settings.cjkSearchBudgetMs,
+          maxConversations: settings.cjkSearchMaxConversations,
+        }),
+        log,
+        onScan: (info) => {
+          if (info.cached === true) {
+            cjkDiag.cacheHits += 1
+          } else {
+            cjkDiag.calls += 1
+            cjkDiag.lastElapsedMs = info.elapsedMs
+          }
+          cjkDiag.added += info.added
+        },
+      })
+  cjkDiag.installed = cjk.installed
+  cjkDiag.reason = cjk.reason
+  // 注册即可逆效果：插件卸载时把原方法放回去。
+  ctx.effect(() => () => cjk.restore())
+
   // ── 对外服务 ──────────────────────────────────────────────────────────────
   const service = {
     /** 列出对话（最近活动在前）。 */
@@ -254,6 +302,8 @@ export function apply(ctx, config) {
       extensionEventTypes: [...diag.extensionTypes].sort(),
       sampleEvents: diag.sampleEvents,
       notes: [...diag.notes],
+      /** 中文兜底的安装与使用情况（只有计数，不记录用户搜了什么）。 */
+      cjkSearch: { ...cjkDiag },
       deepScan: index.deepScan,
       readerSources: [...new Set([...index.records.values()].map((row) => row.readerSource).filter(Boolean))],
       tracked: index.records.size,

@@ -523,6 +523,67 @@ ASCII   "DSH"             → 1
 - ~~**按时间批量**~~ → 已做：面板顶部的时间下拉（7 / 30 / 90 天前的）+ 全选。
   它是**时间**维度，与原生已有的搜索/工作区筛选/排序不重叠，因此符合"不重复原生"的取舍。
 
+## 中文搜索的兜底（0.5.0）
+
+### 现象与根因（都在本机 app.asar 里核对过）
+
+用户反馈：**英文搜得准，中文时好时坏；官方放大镜和本插件面板一模一样**。
+
+1. **同一条链**：面板 `searchContent` → 客户端 `sessions.search` → `remote.session.search`
+   → 宿主 `search(request, signal)` → `listState.search(query, signal)` →
+   `provider.searchSessions({ query, eventFilters, limit, cursor })`。
+   侧栏（`dsh-client-ui-workspace` 的 `deriveSearchResults` 拿的是 "ranked Host content-search page"）
+   也走它 —— **所以只在面板层改，救不了官方放大镜**。
+2. **分词器写死**：`dsh-session-query-sqlite/lib/index.js` 里两张表（`persisted_docs` 与
+   `temp.live_docs`）的建表语句都带 `tokenize = 'unicode61'`；该包可配置项只有
+   `path / openAt / journalMode / defaultLimit`，**没有分词器开关**。
+3. **查询被包成字面短语**：`quoteFtsData(query)` → `"${query}"` 送进 MATCH。
+   unicode61 把连续字母串当一个词元 → 英文单词天然被空格隔开所以准；
+   中文整句连成一片，只有查询词正好等于被标点/英文切出来的那一段时才命中。
+4. **DSH 官方自己写明了**（`dsh-session-query-sqlite/README.zh.md`）：
+   "结果匹配 token 与短语，而非任意子字符串"；字面子串要用宿主侧
+   `ctx.sessionQuery.filterEvents()`（带 `text` 子句，**浏览器半走不到**）；
+   并且 "trigram 备选方案经实测后被否决"。
+5. **实测对照**（本机，同一批会话）：`对话管理器` → 索引 3 个会话、磁盘 4 个；
+   `的根因` → 索引 1、磁盘 3；`搜不到` → 索引 1、磁盘 2 —— **索引侧时中时不中，
+   磁盘侧每次都全中**。（"索引何时会命中"的确切边界规则**没有钉死**，不作结论。）
+
+### 为什么选这一层修
+
+| 候选 | 结论 |
+| --- | --- |
+| 换 tokenizer（trigram） | 否：要改安装包源码（升级即失效）、要重建索引、trigram 要求 ≥3 字符（"检索"这种两字词搜不到）、DSH 官方已实测否决 |
+| 插件自建 Typert Remote 命名空间 | 否（本轮不做）：宿主侧可行（`@deepseek-ai/dsh-typert-protocol` 在 npm 上是 0.1.0-rc.6），但客户端描述符生成代码 `import zod`，**不在客户端平台模块白名单**，纯度门会挡 —— 属于"可能做不到" |
+| **宿主半包一层 `sessions.search`** | **选它**：只改本插件、客户端一行不动，且官方放大镜与面板一起变好 |
+| 面板"复制指令"兜底 | 备选（体验差一步），本轮未做 |
+
+### 实现（`lib/search-cjk.js`）
+
+- `hasCjk()` 判定中日韩文字；**只有含 CJK 的查询才触发**，英文路径逐字不变。
+- `installCjkSearch(sessions, …)` 把 `sessions.search` 包一层：先取官方结果，
+  再用 `searchConversationsOnDisk()`（与工具同一条字面扫描路）补命中并合并。
+- **三条底线**：① 扫描出错只记 warn、原样返回官方结果；② `base.items` 不是数组就
+  原样返回（不猜别人的契约）；③ `restore()` 还原（继承来的就 `delete` 自己的属性），
+  由 `ctx.effect` 在卸载时调用。
+- **错误语义不变**：官方抛错（查询非法、索引关闭、取消）一律原样往外抛 ——
+  README 里"索引关闭时如实回传错误码"那条承诺没有被这条兜底破坏。
+- 合并规则：官方结果在前（不打乱它的排序与授权过滤）、按 `sessionId` 去重
+  （两边都有时保留官方片段，因为它一定含查询词、客户端高亮认得）、
+  上限 20（与 `authorized.slice(0, 20)` 一致）、放不下就 `hasMore: true`。
+- 8 秒 TTL 缓存：面板与官方放大镜连续搜同一个词时只扫一次磁盘。
+- 自检账本新增 `cjkSearch: { installed, reason, calls, cacheHits, added, lastElapsedMs }`
+  —— **只有计数，不记录用户搜了什么**。
+
+### 验证到什么程度（诚实标注）
+
+- ✅ 宿主半冒烟 **76 项**（含：装上补丁、英文零扫描、中文子串真的把夹具 `memo-zh-1`
+  合并进官方结果、返回形状仍是 `items/hasMore`、缓存只扫一次、官方抛错原样外抛、
+  扫描失败不外溢、卸载还原原方法）。
+- ✅ 语法检查、客户端 66 项、产物契约全绿（本轮**没动浏览器半**，`dist/` 未变）。
+- ⏳ **未真机验收**：补丁要 DSH **重启**后才装上。真机上需要确认两件事：
+  ① `conversation_selftest` 的 `cjkSearch.installed` 是否为 `true`；
+  ② 官方放大镜里搜一个中文子串，是否出现原来搜不到的会话。
+
 ## 验证
 
 ### 0. 实机结果（已在这台机器上跑过）
@@ -530,7 +591,7 @@ ASCII   "DSH"             → 1
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
 | 宿主半语法 | `pnpm run check` | **通过**（exit 0） |
-| 宿主半冒烟 | `pnpm test` | **全部通过：59 项检查** |
+| 宿主半冒烟 | `pnpm test` | **全部通过：76 项检查**（含中文搜索兜底） |
 | 客户端产物契约 | `pnpm run verify:client` | **通过**（工厂头尾 + 平台模块纯度） |
 | 客户端契约冒烟 | `pnpm run smoke:client` | **66/66 项通过**（含「显示已归档」开关的面板渲染断言） |
 | 实机挂载（宿主半） | `conversation_selftest` | **8 个工具已注册、跟踪 6 个真实会话、事件实时到达** |

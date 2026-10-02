@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 import { apply, inject, name } from '../index.js'
 import { resolveDshHome } from '../lib/cleanup.js'
+import { hasCjk, installCjkSearch, mergeSearchResults, truncateCodePoints } from '../lib/search-cjk.js'
 import { MIRROR_RELATIVE_PATH } from '../lib/trash-mirror.js'
 
 /** 包根目录（本文件在 <root>/test/ 下）。 */
@@ -105,6 +106,12 @@ function createFakeCtx(options = {}) {
         sessions.set(child.id, child)
         return child
       },
+      // 宿主 `sessions.search` 的最小替身：中文兜底会包在它上面（见「官方搜索链上的中文兜底」）。
+      // 返回形状与本机 app.asar 里的真实实现一致：`{ items: [{ sessionId, snippet }], hasMore }`。
+      search: async (request) => ({
+        items: [{ sessionId: 'base-session', snippet: `官方:${String(request?.query ?? request ?? '')}` }],
+        hasMore: false,
+      }),
     },
     agents: { get: () => undefined, list: () => [] },
     tools: {
@@ -214,6 +221,8 @@ console.log('\nDSH 对话管理器 · 冒烟测试\n')
 // ── 1. 插件契约 ─────────────────────────────────────────────────────────────
 console.log('插件契约')
 const harness = createFakeCtx()
+/** apply 之前的官方 `sessions.search`：卸载后必须一模一样地还原回去。 */
+const originalSessionsSearch = harness.ctx.sessions.search
 check('name 是稳定标识', () => assert.equal(name, 'conversation-manager'))
 check('inject 声明 tools/sessions/agents', () =>
   assert.deepEqual([...inject].sort(), ['agents', 'sessions', 'tools']),
@@ -838,16 +847,157 @@ check('读不开的日志进 unreadable，且不影响其它命中', () => {
 const zhNone = await runClean('conversation_search', { query: '绝对不存在的关键字zzz' })
 check('磁盘正文搜索无命中时返回空', () => assert.deepEqual(zhNone.hits, []))
 
+/* ── 6b. 官方搜索链上的中文兜底（0.5.0）──
+ * 插件把宿主 `sessions.search` 包了一层：查询含 CJK 时补一次磁盘字面扫描。
+ * 官方放大镜与本插件面板走的都是这一个方法，所以这里测的就是"两处一起修好"的那条路。
+ * 此刻 process.env.DSH_HOME 指向上面的夹具，因此扫描会真的读到 memo-zh-1。 */
+console.log('\n官方搜索链上的中文兜底')
+check('apply 时已把宿主 sessions.search 包上（并记进自检账本）', () => {
+  const cjk = harness.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.installed, true, JSON.stringify(cjk))
+  assert.notEqual(harness.ctx.sessions.search, originalSessionsSearch, '应当已经不是原方法')
+})
+
+await checkAsync('英文查询原样通过：一次磁盘扫描都不做', async () => {
+  const result = await harness.ctx.sessions.search({ query: 'session search' })
+  assert.deepEqual(result.items.map((row) => row.sessionId), ['base-session'])
+  assert.equal(result.hasMore, false)
+  const cjk = harness.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.calls, 0, `英文不该触发扫描，实际 ${JSON.stringify(cjk)}`)
+})
+
+await checkAsync('中文子串查询：磁盘命中被合并进官方结果（官方放大镜同一条路）', async () => {
+  const result = await harness.ctx.sessions.search({ query: '检索' })
+  const ids = result.items.map((row) => row.sessionId)
+  assert.equal(ids[0], 'base-session', `官方结果必须排在最前，实际 ${JSON.stringify(ids)}`)
+  assert.ok(ids.includes('memo-zh-1'), `应当补上磁盘命中，实际 ${JSON.stringify(ids)}`)
+  const hit = result.items.find((row) => row.sessionId === 'memo-zh-1')
+  assert.ok(String(hit.snippet).includes('检索'), `片段必须含查询词（面板靠它高亮）：${JSON.stringify(hit)}`)
+  assert.ok(Array.isArray(hit.snippet) === false && Array.from(String(hit.snippet)).length <= 240, '片段按码点截到 240')
+  const cjk = harness.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.calls, 1, JSON.stringify(cjk))
+  assert.ok(cjk.added >= 1, JSON.stringify(cjk))
+  assert.equal(typeof cjk.lastElapsedMs, 'number')
+})
+
+await checkAsync('同一查询在缓存窗口内只扫一次磁盘', async () => {
+  await harness.ctx.sessions.search({ query: '检索' })
+  const cjk = harness.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.calls, 1, `第二次应当复用上次扫描，实际 ${JSON.stringify(cjk)}`)
+  assert.equal(cjk.cacheHits, 1, `复用要单独计数，实际 ${JSON.stringify(cjk)}`)
+})
+
+await checkAsync('兜底没有把返回形状改坏（仍是 items/hasMore）', async () => {
+  const result = await harness.ctx.sessions.search({ query: '检索' })
+  assert.deepEqual(Object.keys(result).sort(), ['hasMore', 'items'])
+  assert.ok(result.items.every((row) => typeof row.sessionId === 'string' && typeof row.snippet === 'string'))
+})
+
 cleaner.disposeAll()
 if (previousHome === undefined) delete process.env.DSH_HOME
 else process.env.DSH_HOME = previousHome
 rmSync(home, { recursive: true, force: true })
 
-// ── 7. 卸载即可逆效果 ───────────────────────────────────────────────────────
+// ── 7. 中文兜底的单元行为 ────────────────────────────────────────────────────
+console.log('\n中文搜索兜底（单元）')
+check('hasCjk 只认中日韩文字（英文与空串不触发兜底）', () => {
+  assert.equal(hasCjk('检索'), true)
+  assert.equal(hasCjk('ドキュメント'), true)
+  assert.equal(hasCjk('대화'), true)
+  assert.equal(hasCjk('中英 mixed 混合'), true)
+  assert.equal(hasCjk('session search'), false)
+  assert.equal(hasCjk(''), false)
+  assert.equal(hasCjk(undefined), false)
+})
+check('mergeSearchResults：官方结果在前、两边都有的保留官方片段', () => {
+  const merged = mergeSearchResults(
+    { items: [{ sessionId: 'a', snippet: '官方片段' }], hasMore: false },
+    [{ id: 'a', snippet: '磁盘片段' }, { id: 'b', snippet: '磁盘命中 B' }],
+  )
+  assert.deepEqual(merged.items.map((row) => row.sessionId), ['a', 'b'])
+  assert.equal(merged.items[0].snippet, '官方片段')
+  assert.equal(merged.hasMore, false)
+})
+check('mergeSearchResults：超出 20 条上限时如实标 hasMore', () => {
+  const extras = Array.from({ length: 25 }, (_, i) => ({ id: `s-${i}`, snippet: 'x' }))
+  const merged = mergeSearchResults({ items: [], hasMore: false }, extras, 20)
+  assert.equal(merged.items.length, 20)
+  assert.equal(merged.hasMore, true)
+  assert.equal(mergeSearchResults({ items: [], hasMore: true }, [], 20).hasMore, true, '官方的 hasMore 不能丢')
+})
+check('mergeSearchResults：形状不认识时原样返回（不猜别人的契约）', () => {
+  const weird = { rows: [] }
+  assert.equal(mergeSearchResults(weird, [{ id: 'a' }]), weird)
+  assert.equal(mergeSearchResults(undefined, [{ id: 'a' }]), undefined)
+})
+check('truncateCodePoints 按码点截断，不劈开代理对', () => {
+  assert.equal(Array.from(truncateCodePoints('检索'.repeat(200), 240)).length, 240)
+  assert.equal(truncateCodePoints('短', 240), '短')
+  assert.equal(truncateCodePoints('长'.repeat(300), 240), '长'.repeat(240))
+})
+check('installCjkSearch：没有 search 方法时如实报告（不抛错）', () => {
+  const outcome = installCjkSearch({})
+  assert.equal(outcome.installed, false)
+  assert.equal(outcome.reason, 'search-unavailable')
+})
+check('restore 把继承来的方法放回原处（不留自己的属性）', () => {
+  const proto = { search: async () => ({ items: [], hasMore: false }) }
+  const target = Object.create(proto)
+  const outcome = installCjkSearch(target, { scan: () => [] })
+  assert.equal(outcome.installed, true)
+  assert.notEqual(target.search, proto.search, '应当已经打上补丁')
+  outcome.restore()
+  assert.equal(Object.hasOwn(target, 'search'), false)
+  assert.equal(target.search, proto.search)
+})
+await checkAsync('installCjkSearch：官方抛错时原样往外抛（错误语义不变）', async () => {
+  const target = { search: async () => { throw new Error('search is disabled') } }
+  installCjkSearch(target, { scan: () => { throw new Error('兜底不该被调用') } })
+  await assert.rejects(() => target.search({ query: '中文' }), /search is disabled/)
+})
+await checkAsync('installCjkSearch：兜底扫描出错也返回官方结果（失败不外溢）', async () => {
+  const warnings = []
+  const target = { search: async () => ({ items: [{ sessionId: 'x', snippet: '官方' }], hasMore: false }) }
+  installCjkSearch(target, { scan: () => { throw new Error('磁盘炸了') }, log: { warn: (m) => warnings.push(m) } })
+  const result = await target.search({ query: '中文' })
+  assert.deepEqual(result.items.map((row) => row.sessionId), ['x'])
+  assert.equal(warnings.length, 1, JSON.stringify(warnings))
+  assert.ok(warnings[0].includes('磁盘炸了'), warnings[0])
+})
+await checkAsync('installCjkSearch：英文查询不触发扫描、返回值逐字不变', async () => {
+  let scanned = 0
+  const base = { items: [{ sessionId: 'x', snippet: 'official' }], hasMore: false }
+  const target = { search: async () => base }
+  installCjkSearch(target, { scan: () => { scanned += 1; return [] } })
+  const result = await target.search({ query: 'session search' })
+  assert.equal(scanned, 0)
+  assert.deepEqual(result, base)
+})
+await checkAsync('installCjkSearch：同一查询在 TTL 内只扫一次磁盘', async () => {
+  let scanned = 0
+  const target = { search: async () => ({ items: [], hasMore: false }) }
+  installCjkSearch(target, {
+    ttlMs: 60_000,
+    scan: () => { scanned += 1; return [{ id: 'zh-1', snippet: '命中' }] },
+  })
+  const first = await target.search({ query: '检索' })
+  const second = await target.search({ query: '检索' })
+  assert.equal(scanned, 1)
+  assert.equal(first.items.length, 1)
+  assert.deepEqual(second.items.map((row) => row.sessionId), ['zh-1'])
+  const other = await target.search({ query: '归档' })
+  assert.equal(scanned, 2, '换查询要重新扫')
+  assert.ok(other.items.length >= 0)
+})
+
+// ── 8. 卸载即可逆效果 ───────────────────────────────────────────────────────
 console.log('\n卸载与回收')
 check('卸载后所有工具被回收（注册即可逆效果）', () => {
   assert.equal(harness.tools.size, 12, '卸载前应当是 12 个工具')
   harness.disposeAll()
   assert.equal(harness.tools.size, 0, '卸载后工具表应当清空')
+})
+check('卸载把官方 sessions.search 还原回原方法（补丁不留残余）', () => {
+  assert.equal(harness.ctx.sessions.search, originalSessionsSearch, 'search 应当与 apply 前一模一样')
 })
 console.log(`\n全部通过：${passed} 项检查\n`)
