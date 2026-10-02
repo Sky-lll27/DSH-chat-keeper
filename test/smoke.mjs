@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { zstdCompressSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
@@ -33,7 +33,14 @@ let passed = 0
  * 失败原因就能直接取到，不必先拿到日志。
  */
 function announceFailure(message) {
-  if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error::${message}`)
+  if (process.env.GITHUB_ACTIONS !== 'true') return
+  // 用 writeSync 而不是 console.log：后面紧接着 process.exit(1)，
+  // 管道上的异步 stdout 可能来不及刷出，注解就丢了。
+  try {
+    writeSync(1, `::error::${message}\n`)
+  } catch {
+    console.log(`::error::${message}`)
+  }
 }
 /** 取栈里指向本测试文件的调用点：注解里带上它，就知道是哪一行失败的。 */
 function where(error) {
