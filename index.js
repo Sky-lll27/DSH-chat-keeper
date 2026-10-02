@@ -27,8 +27,9 @@ import { dirname } from 'node:path'
 import { ConversationIndex, sessionId as sessionIdOf, view } from './lib/conversations.js'
 import { registerConversationTools } from './lib/tools.js'
 import { refreshTrashMirrors } from './lib/trash-mirror.js'
+import { refreshHostStatus } from './lib/host-status.js'
 import { resolveDshHome } from './lib/cleanup.js'
-import { createCjkScanner, installCjkSearch } from './lib/search-cjk.js'
+import { createCjkScanner, installCjkSearchAll } from './lib/search-cjk.js'
 import { isCoreEventType, safe } from './lib/events.js'
 
 /** 插件唯一标识。 */
@@ -60,6 +61,14 @@ const DEFAULTS = {
    * 不想让本插件往你的工程目录里写文件时，把它设为 false（面板会显示"镜像未开启"）。
    */
   trashMirror: true,
+  /**
+   * 是否把**宿主状态快照**（`.dsh-conversation-manager/status.json`）写进各存活会话的工作区。
+   *
+   * 它是给"装没装上"准备的验收凭证：只含插件版本、补丁目标状态与计数，
+   * **不含任何对话内容或用户输入**。0.5.0 就是因为没有它，包错了对象却没人发现。
+   * 设为 false 就不写这一份（回收站镜像仍受 `trashMirror` 控制）。
+   */
+  statusFile: true,
   /**
    * 中文查询的字面兜底：官方内容索引按词元匹配（分词器 `unicode61` 写死在建表语句里），
    * 中文子串经常搜不到。开启后，查询含中日韩文字时本插件会**额外**读磁盘做一次
@@ -128,6 +137,29 @@ export function apply(ctx, config) {
   const persistence = createPersistence(settings, index, log)
   persistence.load()
 
+  // ── 宿主状态快照（验收凭证，见 lib/host-status.js）────────────────────────
+  // 只写插件版本与自检账本，不写任何会话内容；由 trashMirror / statusFile 两个开关控制。
+  // 有了它，"补丁到底装在哪个对象上"不必再靠模型调工具才看得到 —— 0.5.0 就是栽在这。
+  const pluginVersion = readPluginVersion()
+  const statusEnabled = () => settings.trashMirror !== false && settings.statusFile !== false
+  /** 是否已经成功落过盘：保证"至少写出一次"，不依赖 apply 时列表恰好非空。 */
+  let statusWritten = false
+  const liveCwds = () => [...index.sessions.values()]
+    .map((session) => safe(() => session?.header?.cwd))
+    .filter((cwd) => typeof cwd === 'string' && cwd !== '')
+  function writeHostStatus(extraCwds = []) {
+    if (!statusEnabled()) return
+    const cwds = [...new Set([...liveCwds(), ...extraCwds].filter((cwd) => typeof cwd === 'string' && cwd !== ''))]
+    if (cwds.length === 0) return
+    const result = safe(() => refreshHostStatus(cwds, {
+      plugin: name,
+      version: pluginVersion,
+      // cjkDiag 在下方声明：本函数只在事件与 apply 后半段被调用，那时它已初始化。
+      cjkSearch: { ...cjkDiag },
+    }))
+    if ((result?.written?.length ?? 0) > 0) statusWritten = true
+  }
+
   // ── 生命周期追踪 ──────────────────────────────────────────────────────────
   // 全部通过 ctx.on 注册，卸载时自动移除；回调内部一律不抛异常。
   ctx.on('session/created', (session) => {
@@ -144,6 +176,8 @@ export function apply(ctx, config) {
         safe(() => refreshTrashMirrors(home, [cwd]))
       }
     }
+    // 顺手把宿主状态快照也补一份给这个新工作区（验收凭证，见 lib/host-status.js）。
+    writeHostStatus([safe(() => session?.header?.cwd)])
   })
 
   ctx.on('session/disposed', (session) => {
@@ -226,40 +260,78 @@ export function apply(ctx, config) {
   ctx.effect(() => () => persistence.flush())
 
   // ── 中文查询的字面兜底 ────────────────────────────────────────────────────
-  // 官方索引搜不到中文子串，所以把宿主的 `sessions.search` 包一层：查询含 CJK 时
-  // 额外扫一遍磁盘、把命中合并进去。官方放大镜与本插件面板走的是同一个方法，
-  // 因此两处一起受益；英文查询不触发扫描，错误语义也完全不变（详见 lib/search-cjk.js）。
-  // 自检账本：`calls` 只记**真正读了磁盘**的次数，`cacheHits` 记复用上次结果的次数。
+  // 官方索引搜不到中文子串，所以把宿主的搜索入口包一层：查询含 CJK 时额外扫一遍磁盘、
+  // 把命中合并进去。官方放大镜与本插件面板走的是同一个入口，因此两处一起受益；
+  // 英文查询不触发扫描，错误语义也完全不变（详见 lib/search-cjk.js）。
+  //
+  // 候选为什么不止一个（0.5.0 的教训）：网关把 `remote.session.search` 绑在
+  // **sessionController**（`namespace: "session"`）上，而 `sessions` 是会话存储
+  // （同步 `list()`），两者不是同一个对象——0.5.0 只包了后者，补丁从未被调用。
+  const cjkEnabled = settings.cjkSearch !== false
+  /** 自检账本：`calls` 只记真正读了磁盘的次数，`cacheHits` 记复用上次结果的次数。 */
   const cjkDiag = {
     installed: false,
-    reason: 'not-started',
+    reason: cjkEnabled ? 'not-started' : 'disabled',
+    targets: {},
+    attempts: 0,
     calls: 0,
     cacheHits: 0,
     added: 0,
     lastElapsedMs: null,
   }
-  const cjk = settings.cjkSearch === false
-    ? { installed: false, reason: 'disabled', restore: () => {} }
-    : installCjkSearch(sessions, {
-        scan: createCjkScanner({
-          budgetMs: settings.cjkSearchBudgetMs,
-          maxConversations: settings.cjkSearchMaxConversations,
-        }),
-        log,
-        onScan: (info) => {
-          if (info.cached === true) {
-            cjkDiag.cacheHits += 1
-          } else {
-            cjkDiag.calls += 1
-            cjkDiag.lastElapsedMs = info.elapsedMs
-          }
-          cjkDiag.added += info.added
-        },
-      })
-  cjkDiag.installed = cjk.installed
-  cjkDiag.reason = cjk.reason
+  const cjkRestores = []
+  let cjkAttempts = 0
+  /** sessionController 可能比本插件晚注册：给几次重试机会，装上真正的入口就停。 */
+  const CJK_MAX_ATTEMPTS = 10
+  const cjkOptions = {
+    scan: createCjkScanner({
+      budgetMs: settings.cjkSearchBudgetMs,
+      maxConversations: settings.cjkSearchMaxConversations,
+    }),
+    log,
+    onScan: (info) => {
+      if (info.cached === true) {
+        cjkDiag.cacheHits += 1
+      } else {
+        cjkDiag.calls += 1
+        cjkDiag.lastElapsedMs = info.elapsedMs
+      }
+      cjkDiag.added += info.added
+    },
+  }
+  const cjkCandidates = () => [
+    { name: 'sessionController', target: safe(() => ctx.get?.('sessionController')) },
+    { name: 'sessions', target: sessions },
+  ]
+  const ensureCjk = () => {
+    if (!cjkEnabled) return
+    // 装上真正的入口就停；否则继续尝试（最多 CJK_MAX_ATTEMPTS 次）。
+    if (cjkDiag.targets.sessionController === 'installed') return
+    if (cjkAttempts >= CJK_MAX_ATTEMPTS) return
+    cjkAttempts += 1
+    const outcome = installCjkSearchAll(cjkCandidates(), cjkOptions)
+    cjkRestores.push(outcome.restore)
+    cjkDiag.attempts = cjkAttempts
+    cjkDiag.installed = outcome.installed || cjkDiag.installed
+    cjkDiag.reason = outcome.reason
+    cjkDiag.targets = outcome.targets
+    if (outcome.targets.sessionController === 'installed') {
+      log.info(`中文搜索兜底已挂在 sessionController.search 上（第 ${cjkAttempts} 次尝试）`)
+    }
+    // 装配结果变了就落一次盘：这是外部能读到的验收凭证。
+    writeHostStatus()
+  }
+  ensureCjk()
+  // 重试钩子：sessionController 若晚于本插件注册，第一个会话事件到达时补装。
+  // 顺带保证状态快照至少落盘一次 —— 万一 apply 时还没拿到任何存活会话。
+  ctx.on('session/event', (session) => {
+    ensureCjk()
+    if (!statusWritten) writeHostStatus([safe(() => session?.header?.cwd)])
+  })
   // 注册即可逆效果：插件卸载时把原方法放回去。
-  ctx.effect(() => () => cjk.restore())
+  ctx.effect(() => () => {
+    for (const restore of cjkRestores) restore()
+  })
 
   // ── 对外服务 ──────────────────────────────────────────────────────────────
   const service = {
@@ -448,6 +520,19 @@ function createPersistence(settings, index, log) {
       }
       write()
     },
+  }
+}
+
+/**
+ * 读本插件的版本号，写进宿主状态快照。
+ * 读不到（打包异常、权限问题）就返回空串，绝不因此让插件加载失败。
+ */
+function readPluginVersion() {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8'))
+    return typeof parsed?.version === 'string' ? parsed.version : ''
+  } catch {
+    return ''
   }
 }
 

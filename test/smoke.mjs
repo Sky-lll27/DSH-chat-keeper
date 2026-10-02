@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 import { apply, inject, name } from '../index.js'
 import { resolveDshHome } from '../lib/cleanup.js'
-import { hasCjk, installCjkSearch, mergeSearchResults, truncateCodePoints } from '../lib/search-cjk.js'
+import { hasCjk, installCjkSearch, installCjkSearchAll, mergeSearchResults, truncateCodePoints } from '../lib/search-cjk.js'
 import { MIRROR_RELATIVE_PATH } from '../lib/trash-mirror.js'
 
 /** 包根目录（本文件在 <root>/test/ 下）。 */
@@ -702,7 +702,61 @@ check('trashMirror:false 时不往工作区写镜像', () => {
   quiet.sessions.set(fence.id, fence)
   quiet.fire('session/created', fence)
   assert.ok(!existsSync(join(home, 'ws-off', '.dsh-conversation-manager', 'trash.json')))
+  assert.ok(!existsSync(join(home, 'ws-off', '.dsh-conversation-manager', 'status.json')),
+    'trashMirror:false 是"一个字节都不写"，状态快照也必须停')
   quiet.disposeAll()
+})
+
+/* ── 宿主状态快照：外部可读的验收凭证（0.5.1）──
+ * 0.5.0 包错了对象却没人发现，就是因为宿主侧"装没装上"没有可读的证据。
+ * 现在把它落成文件：只含版本与自检账本，绝不含会话内容。 */
+const statusFile = join(home, 'ws', '.dsh-conversation-manager', 'status.json')
+check('宿主状态快照写进了存活会话的工作区（验收凭证）', () => {
+  assert.ok(existsSync(statusFile), `快照应存在于 ${statusFile}`)
+  const status = JSON.parse(readFileSync(statusFile, 'utf8'))
+  const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
+  assert.equal(status.plugin, 'conversation-manager')
+  assert.equal(status.version, pkg.version, `版本号要与 package.json 一致：${JSON.stringify(status)}`)
+  assert.equal(typeof status.cjkSearch?.installed, 'boolean')
+  assert.ok(status.cjkSearch !== undefined && typeof status.cjkSearch.targets === 'object', JSON.stringify(status))
+  assert.equal(typeof status.at, 'string')
+  // 隐私：快照只放版本与计数，绝不能出现会话正文或会话 id。
+  const text = JSON.stringify(status)
+  assert.ok(!text.includes('我在运行中'), '快照不得包含对话正文')
+  assert.ok(!text.includes('session-1'), '快照不得包含会话 id')
+})
+check('statusFile:false 只停写状态快照，回收站镜像照常', () => {
+  const noStatus = createFakeCtx()
+  apply(noStatus.ctx, { statusFile: false })
+  const fence = makeSession('session-10', [])
+  fence.header.cwd = join(home, 'ws-nostatus')
+  noStatus.sessions.set(fence.id, fence)
+  noStatus.fire('session/created', fence)
+  assert.ok(existsSync(join(home, 'ws-nostatus', '.dsh-conversation-manager', 'trash.json')), '镜像应当照常写')
+  assert.ok(!existsSync(join(home, 'ws-nostatus', '.dsh-conversation-manager', 'status.json')),
+    '状态快照应当被 statusFile:false 关掉')
+  noStatus.disposeAll()
+})
+check('apply 时没有存活会话：首个会话事件保证快照至少写出一次', () => {
+  const later = createFakeCtx()
+  apply(later.ctx, {})
+  const ws = join(home, 'ws-late-status')
+  const file = join(ws, '.dsh-conversation-manager', 'status.json')
+  assert.ok(!existsSync(file), 'apply 时还没有任何工作区可写')
+  const session = makeSession('session-late-status', [])
+  session.header.cwd = ws
+  later.sessions.set(session.id, session)
+  later.fire('session/event', session, {
+    seq: 1,
+    time: Date.now(),
+    type: 'user/message',
+    data: { content: [{ type: 'text', text: '中文' }] },
+  })
+  assert.ok(existsSync(file), `首个会话事件后应当写出快照：${file}`)
+  const status = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(status.cjkSearch.installed, true, JSON.stringify(status))
+  assert.ok(!JSON.stringify(status).includes('中文'), '快照不得包含消息正文')
+  later.disposeAll()
 })
 
 const restored = await runClean('conversation_restore', {})
@@ -847,9 +901,9 @@ check('读不开的日志进 unreadable，且不影响其它命中', () => {
 const zhNone = await runClean('conversation_search', { query: '绝对不存在的关键字zzz' })
 check('磁盘正文搜索无命中时返回空', () => assert.deepEqual(zhNone.hits, []))
 
-/* ── 6b. 官方搜索链上的中文兜底（0.5.0）──
- * 插件把宿主 `sessions.search` 包了一层：查询含 CJK 时补一次磁盘字面扫描。
- * 官方放大镜与本插件面板走的都是这一个方法，所以这里测的就是"两处一起修好"的那条路。
+/* ── 6b. 官方搜索链上的中文兜底（0.5.0 引入）──
+ * 插件把宿主的搜索入口包了一层：查询含 CJK 时补一次磁盘字面扫描。
+ * 官方放大镜与本插件面板走的都是这一个入口，所以这里测的就是"两处一起修好"的那条路。
  * 此刻 process.env.DSH_HOME 指向上面的夹具，因此扫描会真的读到 memo-zh-1。 */
 console.log('\n官方搜索链上的中文兜底')
 check('apply 时已把宿主 sessions.search 包上（并记进自检账本）', () => {
@@ -891,6 +945,84 @@ await checkAsync('兜底没有把返回形状改坏（仍是 items/hasMore）', 
   const result = await harness.ctx.sessions.search({ query: '检索' })
   assert.deepEqual(Object.keys(result).sort(), ['hasMore', 'items'])
   assert.ok(result.items.every((row) => typeof row.sessionId === 'string' && typeof row.snippet === 'string'))
+})
+
+/* ── 6c. 补丁必须挂在 sessionController 上（0.5.0 的教训，防复发）──
+ * 网关把 `remote.session.search` 绑在 `sessionController`（`namespace: "session"`），
+ * 而 `ctx.sessions` 是会话存储（同步 list()）——0.5.0 只包了后者，
+ * 面上一切正常、功能却是空的：补丁一次都没被调用过。 */
+console.log('\n补丁目标：sessionController（网关真正的入口）')
+const controllerService = {
+  search: async (request) => ({
+    items: [{ sessionId: 'base-session', snippet: `官方:${request?.query ?? ''}` }],
+    hasMore: false,
+  }),
+}
+const originalControllerSearch = controllerService.search
+const withController = createFakeCtx()
+withController.ctx.set('sessionController', controllerService)
+apply(withController.ctx, {})
+
+check('sessionController.search 被包上，账本记下每个候选的状态', () => {
+  const cjk = withController.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.installed, true, JSON.stringify(cjk))
+  assert.equal(cjk.targets.sessionController, 'installed', JSON.stringify(cjk.targets))
+  assert.equal(cjk.targets.sessions, 'installed', JSON.stringify(cjk.targets))
+  assert.notEqual(controllerService.search, originalControllerSearch, '网关入口必须已经不是原方法')
+})
+
+/* 状态快照就是我在真机上要读的那份凭证：把"补丁挂在 sessionController 上"落成文件。 */
+const controllerWs = join(home, 'ws-controller')
+const controllerSession = makeSession('session-controller-ws', [])
+controllerSession.header.cwd = controllerWs
+withController.sessions.set(controllerSession.id, controllerSession)
+withController.fire('session/created', controllerSession)
+check('状态快照如实记录「补丁挂在 sessionController 上」', () => {
+  const file = join(controllerWs, '.dsh-conversation-manager', 'status.json')
+  assert.ok(existsSync(file), `快照应存在于 ${file}`)
+  const status = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(status.cjkSearch.installed, true, JSON.stringify(status))
+  assert.equal(status.cjkSearch.targets.sessionController, 'installed', JSON.stringify(status.cjkSearch))
+  assert.ok(!JSON.stringify(status).includes('session-controller-ws'), '快照不得包含会话 id')
+})
+
+await checkAsync('经 sessionController 的中文查询真的补进磁盘命中', async () => {
+  const result = await controllerService.search({ query: '检索' })
+  const ids = result.items.map((row) => row.sessionId)
+  assert.equal(ids[0], 'base-session', `官方结果在前，实际 ${JSON.stringify(ids)}`)
+  assert.ok(ids.includes('memo-zh-1'), `网关入口也必须拿到磁盘命中，实际 ${JSON.stringify(ids)}`)
+})
+
+const late = createFakeCtx()
+apply(late.ctx, {})
+check('apply 时 sessionController 缺席：如实记 absent，不冒充装上', () => {
+  const cjk = late.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.targets.sessionController, 'absent', JSON.stringify(cjk.targets))
+  assert.equal(cjk.targets.sessions, 'installed', JSON.stringify(cjk.targets))
+  assert.equal(cjk.installed, true, JSON.stringify(cjk))
+  assert.equal(cjk.attempts, 1, JSON.stringify(cjk))
+})
+const lateController = { search: async () => ({ items: [], hasMore: false }) }
+const lateOriginalSearch = lateController.search
+late.ctx.set('sessionController', lateController)
+late.fire('session/event', makeSession('session-late', []), {
+  seq: 1,
+  time: Date.now(),
+  type: 'user/message',
+  data: { content: [{ type: 'text', text: '中文' }] },
+})
+check('sessionController 晚注册时，第一个会话事件把它补装上（重试机制）', () => {
+  assert.notEqual(lateController.search, lateOriginalSearch, '应当已被包上')
+  const cjk = late.services.get('conversationManager').diagnostics().cjkSearch
+  assert.equal(cjk.targets.sessionController, 'installed', JSON.stringify(cjk.targets))
+  assert.equal(cjk.attempts, 2, JSON.stringify(cjk))
+})
+
+withController.disposeAll()
+late.disposeAll()
+check('卸载把 sessionController.search 也还原回原方法', () => {
+  assert.equal(controllerService.search, originalControllerSearch, '网关入口应当与 apply 前一模一样')
+  assert.equal(lateController.search, lateOriginalSearch, '晚注册的入口同样要还原')
 })
 
 cleaner.disposeAll()
@@ -949,6 +1081,28 @@ check('restore 把继承来的方法放回原处（不留自己的属性）', ()
   outcome.restore()
   assert.equal(Object.hasOwn(target, 'search'), false)
   assert.equal(target.search, proto.search)
+})
+check('installCjkSearchAll：逐个候选安装并汇总状态（缺席如实记 absent）', () => {
+  const target = { search: async () => ({ items: [], hasMore: false }) }
+  const original = target.search
+  const outcome = installCjkSearchAll(
+    [{ name: 'sessionController', target: undefined }, { name: 'sessions', target }],
+    { scan: () => [] },
+  )
+  assert.equal(outcome.installed, true)
+  assert.deepEqual(outcome.targets, { sessionController: 'absent', sessions: 'installed' })
+  assert.notEqual(target.search, original, '安装后应当已经是补丁')
+  outcome.restore()
+  assert.equal(target.search, original, 'restore 必须把装上的都还原回原方法')
+})
+check('installCjkSearchAll：同一对象只装一次（两个候选指向同一个服务）', () => {
+  const target = { search: async () => ({ items: [], hasMore: false }) }
+  const original = target.search
+  const outcome = installCjkSearchAll([{ name: 'a', target }, { name: 'b', target }], { scan: () => [] })
+  assert.equal(outcome.targets.a, 'installed')
+  assert.equal(outcome.targets.b, 'same-as-before')
+  outcome.restore()
+  assert.equal(target.search, original, '还原后必须与安装前一模一样')
 })
 await checkAsync('installCjkSearch：官方抛错时原样往外抛（错误语义不变）', async () => {
   const target = { search: async () => { throw new Error('search is disabled') } }

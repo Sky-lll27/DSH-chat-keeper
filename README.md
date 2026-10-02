@@ -130,9 +130,11 @@ unicode61 把**连续字母串**当一个词元：英文单词天然被空格隔
 | `"内容检索示例"`（整段中文） | ✅ 命中 |
 | `"检索"`（中文**子串**，原文是「内容检索示例」） | ❌ 0 条 |
 
-**0.5.0 起**：本插件在**宿主侧**把 `sessions.search` 包了一层——查询里含中日韩文字时，
+**0.5.1 起**：本插件在**宿主侧**把网关的搜索入口 `sessionController.search` 包了一层
+（`ctx.sessions` 是会话存储，**不是同一个对象**——0.5.0 包错了对象、补丁从未被调用，
+工程笔记里记了这次返工）；查询里含中日韩文字时，
 **额外**读一遍磁盘日志做字面子串扫描，把命中的会话合并进结果。因为**官方放大镜与
-本插件面板走的是同一个方法**，所以两处一起变好；纯英文查询连扫描都不触发，
+本插件面板走的是同一个入口**，所以两处一起变好；纯英文查询连扫描都不触发，
 错误语义（比如"索引没打开"）也原样保留。**不改 DSH 的任何文件。**
 
 边界照实说：
@@ -143,7 +145,7 @@ unicode61 把**连续字母串**当一个词元：英文单词天然被空格隔
   两边都有的会话保留官方片段；
 - 扫描是同步读日志（与工具同一实现），中文查询时界面可能有轻微停顿；
   调小 `cjkSearchBudgetMs` 或设 `cjkSearch: false` 可以关掉；
-- 这是**运行时**包一层宿主方法。DSH 升级若改了 `sessions.search` 的返回形状，
+- 这是**运行时**包一层宿主方法。DSH 升级若改了 `sessionController.search` 的返回形状，
   兜底会**自动退化成官方行为**（形状不认识就原样返回 + 记一条 warn），不会把搜索搞坏。
 
 **工具那条路仍然不同**（也仍是能力最全的）：它直接读会话日志（多帧 zstd 逐帧解压）
@@ -226,7 +228,8 @@ unicode61 把**连续字母串**当一个词元：英文单词天然被空格隔
 | `titleMax` | `80` | 自动标题的最大字符数 |
 | `persistPath` | `''`（关闭） | 非空时把索引快照写入该文件，重启后仍能看到历史对话元数据 |
 | `saveDebounceMs` | `1000` | 写盘防抖间隔 |
-| `trashMirror` | `true` | 是否把**回收站概览**写进各存活会话的工作区（`<工作区>/.dsh-conversation-manager/trash.json`），供面板显示。镜像**只含批次名/时间/条数/大小，不含正文或标题**；设为 `false` 则不往你的工程目录写任何文件 |
+| `trashMirror` | `true` | 是否把**回收站概览**写进各存活会话的工作区（`<工作区>/.dsh-conversation-manager/trash.json`），供面板显示。镜像**只含批次名/时间/条数/大小，不含正文或标题**；设为 `false` 则不往你的工程目录写**任何**文件（连下面的状态快照一起停） |
+| `statusFile` | `true` | 是否把**宿主状态快照**（`<工作区>/.dsh-conversation-manager/status.json`）写进各存活会话的工作区：只有插件版本、补丁装在哪些对象上、扫描计数，**不含任何对话内容或你的输入**。想知道"中文兜底到底装上没有"就看它 |
 | `cjkSearch` | `true` | 中文（中日韩）查询的**字面兜底**：查询含 CJK 文字时额外扫一遍磁盘，把命中的会话合并进官方结果——**官方放大镜与本插件面板同时受益**。设为 `false` 则完全交还给官方索引（英文查询本来就不触发） |
 | `cjkSearchBudgetMs` | `2000` | 兜底扫描的时间预算（毫秒）。扫描是同步读日志，预算越大、中文查询时可能顿得越久 |
 | `cjkSearchMaxConversations` | `120` | 兜底最多读几个对话（按最近活动倒序，先搜最可能相关的） |
@@ -249,9 +252,10 @@ lib/
   tools.js               12 个 ToolDefinition
   cleanup.js             磁盘层面的列出 / 回收站 / 恢复（纯函数）
   trash-mirror.js        把回收站概览写进会话工作区（供 Web 面板显示）
+  host-status.js         把"补丁装在哪些对象上"写进会话工作区（验收凭证）
   log-read.js            按文件读会话日志（多帧 zstd 逐帧解压）
   search-disk.js         磁盘字面子串扫描（工具那条路）
-  search-cjk.js          中文查询兜底：包在宿主 `sessions.search` 上（0.5.0）
+  search-cjk.js          中文查询兜底：包在宿主 `sessionController.search` 上（0.5.1）
 src/client/              浏览器半（TypeScript + React）
   index.tsx              页签类型、三个 slot 注册、inject face
   manager.tsx            总表面板
@@ -270,7 +274,7 @@ docs/ENGINEERING-NOTES.md 工程笔记：契约核对、实测数据、踩过的
 ```sh
 pnpm install
 pnpm run check          # 语法检查
-pnpm test               # 宿主半冒烟：76 项
+pnpm test               # 宿主半冒烟：87 项
 pnpm run bundle         # 构建浏览器半（改了 src/client/ 才需要）
 pnpm run check:client   # 产物契约 + 纯度门 + 冒烟：66 项
 pnpm run check:dist     # 重新构建后检查产物与提交的一致（CI 会跑）
@@ -298,6 +302,20 @@ pnpm run check:dist     # 重新构建后检查产物与提交的一致（CI 会
   它补的是"搜得到"，**不承诺"排序最相关"**（官方结果仍在最前面）。
 
 ## 常见问题
+
+**怎么确认「中文搜索兜底」真的装上了（而不是又一版空转）？**
+
+看任意存活会话工作区里的 `.dsh-conversation-manager/status.json`：
+
+```json
+{ "version": "0.5.1", "cjkSearch": { "installed": true,
+  "targets": { "sessionController": "installed", "sessions": "installed" }, ... } }
+```
+
+`targets.sessionController` 必须是 `"installed"` —— 那才是网关真正调用的入口
+（0.5.0 包在 `sessions` 上，`targets` 会如实写 `search-unavailable`，功能等于没有）。
+同一份数据也能在对话里让模型调 `conversation_selftest` 看到。
+文件里**只有版本与计数**，没有你的对话内容。
 
 **Windows 上安装报"没有写入权限" / `EPERM: operation not permitted, symlink ...`？**
 

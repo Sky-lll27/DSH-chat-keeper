@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation-manager",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "description": "DeepSeek Harness（DSH）对话管家：跨工作区总表、正文搜索（中文子串 / 未打开的旧对话也能搜 / 定位到命中那句并读出上下文）、按时间批量归档，以及 DSH 界面没有的磁盘层面删除（回收站式，可恢复）。",
   "keywords": [
@@ -59,7 +59,7 @@
     }
   },
   "scripts": {
-    "check": "node --check index.js && node --check lib/events.js && node --check lib/conversations.js && node --check lib/tools.js && node --check lib/cleanup.js && node --check lib/trash-mirror.js && node --check lib/log-read.js && node --check lib/search-disk.js && node --check lib/search-cjk.js",
+    "check": "node --check index.js && node --check lib/events.js && node --check lib/conversations.js && node --check lib/tools.js && node --check lib/cleanup.js && node --check lib/trash-mirror.js && node --check lib/host-status.js && node --check lib/log-read.js && node --check lib/search-disk.js && node --check lib/search-cjk.js",
     "test": "node test/smoke.mjs",
     "bundle": "tsdown",
     "watch": "tsdown --watch",
