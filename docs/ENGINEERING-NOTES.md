@@ -862,6 +862,57 @@ other types`），所以「文档这么说」与「你的构建这么做」之�
 （见 `lib/tools.js` 的 `coerce*`）。之所以这么写：插件位于 harness 源码树之外时，
 Node 的裸模块解析到不了 `@deepseek-ai/*`，任何顶层 import 都会让插件加载失败。
 
+## 冷对话改名：两处都让工具够不着没打开过的对话（0.5.2）
+
+起因是一次真实使用：要把 35 个对话按分组批量改标题，**30 个没打开过的对话全部报
+`Unknown conversation`**。定位到两处，都修在宿主半，不碰 DSH 的任何文件。
+
+**① 加载期的补登记被 Promise 静默跳过。** `index.js` 原本只接受 `sessions.list()`
+同步返回数组，拿到 Promise 就只记一条 note 跳过（就是自检里那句「sessions.list()
+没有返回数组（可能是 Promise）：加载时的会话补登记被跳过」）。本机宿主（桌面版
+0.2.0-rc.2）**就是异步实现**，于是补登记从未真正生效。现在数组与 Promise 两条路都接：
+用 `.then` 而不是 `await`，让 `apply` 保持同步——这是原注释里的硬约束，顶层 `for...of`
+抛错会让整个插件加载失败。
+
+**② 但修完 ① 仍然只有 2 条。** 重启后立刻读自检：`trackedConversations: 2`，
+正好是当时存活的两个会话 —— 说明 **`sessions.list()` 返回的是存活会话，不是磁盘上的
+全部对话**。所以「加载期补登记」这条路天生够不着冷对话，必须另找入口。
+
+**③ 让工具按需从磁盘补登记。** `conversation_label` 在索引里找不到 id 时，先
+`hydrateFromDisk()` 扫一次磁盘（复用 `conversation_list_all` 用的 `listConversations`），
+把全部对话登记进索引，再按 id 继续。登记走新增的 `ConversationIndex.seed()`：
+**只记 id / 标题 / 工作区，不写进 `this.sessions`**（否则 `getSession()` 会声称它有存活
+会话，历史读取与派生会拿到一个非会话对象），也**不做 `backfill()`**（那需要
+`deriveMessages()` / `seq`，会话描述里没有）。
+
+**④ 宿主能不能改冷会话？读源码确认可以。** 从 npm 取与宿主同版本的
+`@deepseek-ai/dsh-api-session-controller@0.2.0-rc.2`，`lib/types/commands.js`：
+
+```js
+async rename(request) {
+    const agent = await this.resolveAgent(request.sessionId);   // 会 resume 冷会话
+    const titles = this.ctx.get('sessionTitle');
+    const accepted = titles.rename(agent.session, request.title);
+    return { title: accepted.title, seq: accepted.eventSeq };
+}
+```
+
+官方 README 的原话印证：*"Cancellation requires live state; queue mutation, model,
+**rename**, prompt, and file-reference operations may resolve or resume an ordinary
+Session."*
+
+**实测结果（开发机，2026-10-09）**：35 个对话全部改名成功，`conversation_label` 每次
+都回 `durable: true`。独立核对方式是**直接读磁盘投影缓存**
+（`$DSH_HOME/storages/session_projcache/sessions/<id>.json` 的 `rows.title.val`），
+**35/35 带分组前缀、0 条漏改**（不信工具自己的报告）。
+
+**已知副作用**：补登记之后宿主侧索引包含全部对话，因此 `conversation_list` 与
+`conversation_stats` 会从「只有存活会话」变成「包含磁盘上的全部」。浏览器半**不受影响**
+—— 面板走官方 `useSessions`（`src/client/manager.tsx`），不读这份索引。
+
+**回归**：`test/smoke.mjs` 新增 3 项断言（Promise 里的会话必须真的进索引、冷对话改名
+必须走到宿主的 `rename`、一次补登记要把磁盘上的对话都装进索引），`pnpm test` 89 项全绿。
+
 ## 早期岔路（已废弃）
 
 本仓库之前有过一个独立的 `dialog-manager/` Node 程序，它自定义了一套

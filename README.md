@@ -188,7 +188,7 @@ unicode61 把**连续字母串**当一个词元：英文单词天然被空格隔
 | `conversation_history` | 把对话历史投影为 user/assistant/tool 消息，可含工具调用与结果 |
 | `conversation_search` | **字面子串**检索标题、工作目录与**所有对话的正文**（含冷对话，直接读磁盘日志），中文子串也能命中；返回摘录、命中次数与扫描诊断 |
 | `conversation_stats` | 汇总对话数、存活/运行数、轮次、消息数、工具调用、事件数、token 用量 |
-| `conversation_label` | 设置管理器侧标题；宿主有持久化改名服务时一并写入并如实报告走了哪条路 |
+| `conversation_label` | 设置管理器侧标题；宿主有持久化改名服务时一并写入并如实报告走了哪条路。**0.5.2 起**索引里没有的冷对话会先按需从磁盘补登记，所以**没打开过的对话也能改名**（宿主的 `rename` 会 resolve 冷会话） |
 | `conversation_fork` | 在指定事件序号处派生新会话 |
 | `conversation_selftest` | **只读自检**：把本插件对宿主的所有假设与宿主真实形态逐条对账 |
 | `conversation_list_all` | **从磁盘**列出全部对话（含未装载的），带标题、首句话、工作区、大小、磁盘路径 |

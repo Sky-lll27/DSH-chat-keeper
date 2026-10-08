@@ -225,17 +225,39 @@ export function apply(ctx, config) {
   // 插件加载时已经在跑的会话也要进索引（插件可能是在会话中途被挂载的）。
   // 注意：safe() 只保护调用本身，因此这里还要确认拿到的确实是数组——
   // 若 list() 返回 Promise，for...of 会在 apply 顶层抛错，整个插件加载失败。
+  //
+  // 宿主当前就是**异步**实现（返回 Promise），所以两条路都接：数组当场登记，
+  // Promise 解析后再登记。用 .then 而不是 await，避免把 apply 变成异步函数。
+  // 列表项可能是存活会话（能读历史，走 upsert），也可能只是会话描述（只有 id/标题，
+  // 走 seed）——按有没有 deriveMessages 分流。
   const hasList = typeof sessions?.list === 'function'
-  let listReturnedArray = !hasList
-  const seeded = safe(() => {
-    const listed = sessions?.list?.()
-    if (Array.isArray(listed)) return listed
-    listReturnedArray = false
-    return []
-  })
-  for (const session of seeded ?? []) index.upsert(session)
-  if (!listReturnedArray) {
-    diag.notes.push('sessions.list() 没有返回数组（可能是 Promise）：加载时的会话补登记被跳过。')
+  const seedListed = (listed) => {
+    for (const item of listed) {
+      if (typeof item?.deriveMessages === 'function') index.upsert(item)
+      else index.seed(item)
+    }
+  }
+  if (!hasList) {
+    diag.notes.push('宿主没有 sessions.list()：加载时的会话补登记被跳过。')
+  } else {
+    safe(() => {
+      const listed = sessions?.list?.()
+      if (Array.isArray(listed)) {
+        seedListed(listed)
+        return
+      }
+      if (listed && typeof listed.then === 'function') {
+        listed.then(
+          (rows) => {
+            if (Array.isArray(rows)) seedListed(rows)
+            else diag.notes.push('sessions.list() 的 Promise 解析结果不是数组：加载时的会话补登记被跳过。')
+          },
+          () => diag.notes.push('sessions.list() 的 Promise 被拒绝：加载时的会话补登记被跳过。'),
+        )
+        return
+      }
+      diag.notes.push('sessions.list() 既不是数组也不是 Promise：加载时的会话补登记被跳过。')
+    })
   }
 
   // ── 工具注册 ──────────────────────────────────────────────────────────────

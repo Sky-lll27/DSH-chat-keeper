@@ -236,14 +236,30 @@ check('暴露 conversationManager 服务', () => {
 })
 
 // 回归：这是唯一能造成「插件根本加载不了」的路径（apply 顶层的 for...of）。
+// 宿主现在是**异步**实现（返回 Promise），所以这里连「Promise 里的会话要真的进索引」
+// 一起验：apply 保持同步、不 await，也不能漏登记——否则 conversation_label 这类
+// 「按 id 操作」的工具会对没打开过的对话报 Unknown conversation（本机实测过）。
+// 两条形状都覆盖：存活会话（有 deriveMessages）与只有元数据的描述。
 const hostile = createFakeCtx({ listReturnsPromise: true })
-check('sessions.list() 返回 Promise 时插件仍能加载', () => {
+hostile.sessions.set('session-async-live', makeSession('session-async-live', []))
+hostile.sessions.set('session-async-cold', {
+  id: 'session-async-cold',
+  title: '描述型会话',
+  header: { cwd: join(tmpdir(), 'dsh-ws-fixture') },
+})
+await checkAsync('sessions.list() 返回 Promise 时插件仍能加载，且解析出的会话进索引', async () => {
   apply(hostile.ctx, {})
   assert.ok(hostile.tools.has('conversation_list'), '工具应当照常注册')
-  const notes = hostile.services.get('conversationManager').diagnostics().notes
+  // 等一个宏任务，让 .then 的回调跑完（插件故意不 await，apply 保持同步）。
+  await new Promise((resolve) => setImmediate(resolve))
+  const service = hostile.services.get('conversationManager')
+  const ids = service.list({ limit: 100 }).map((row) => row.id)
+  assert.ok(ids.includes('session-async-live'), `存活会话应当进索引，实际 ${JSON.stringify(ids)}`)
+  assert.ok(ids.includes('session-async-cold'), `描述型会话也应当进索引，实际 ${JSON.stringify(ids)}`)
+  const notes = service.diagnostics().notes
   assert.ok(
-    notes.some((note) => note.includes('list()')),
-    `应当记下 list() 未返回数组，实际 notes=${JSON.stringify(notes)}`,
+    !notes.some((note) => note.includes('补登记被跳过')),
+    `不应再记「补登记被跳过」，实际 notes=${JSON.stringify(notes)}`,
   )
   hostile.disposeAll()
 })
@@ -660,6 +676,29 @@ check('conversation_list_all 从磁盘列出全部对话（含标题与路径）
 check('列表标出运行中的对话', () => {
   assert.equal(all.conversations.find(row => row.id === 'session-1').running, true)
   assert.equal(all.conversations.find(row => row.id === 'old-a').running, false)
+})
+
+/* 冷对话改标题：索引里的记录只来自存活会话，没打开过的对话不在其中，必须能按需从磁盘补登记。
+ * 这是本机实测的真实故障：30 个没打开过的对话全部报 Unknown conversation。 */
+const renamedRequests = []
+cleaner.ctx.set('sessionController', {
+  rename: async (request) => {
+    renamedRequests.push(request)
+    return { title: request.title, seq: 1 }
+  },
+})
+const coldLabel = await runClean('conversation_label', { conversation_id: 'old-c', title: '分组/旧对话 C' })
+check('冷对话也能改标题：按需从磁盘补登记后走宿主的 rename', () => {
+  assert.equal(coldLabel.conversationId, 'old-c')
+  assert.equal(coldLabel.managerTitleUpdated, true)
+  assert.equal(coldLabel.durable, true, JSON.stringify(coldLabel))
+  assert.deepEqual(renamedRequests, [{ sessionId: 'old-c', title: '分组/旧对话 C' }])
+})
+check('一次补登记把磁盘上的对话都装进索引（不必每条扫一次盘）', () => {
+  const ids = cleaner.services.get('conversationManager').list({ limit: 100 }).map(row => row.id)
+  for (const id of ['old-a', 'old-b', 'old-c', 'session-1']) {
+    assert.ok(ids.includes(id), `${id} 应当进索引，实际 ${JSON.stringify(ids)}`)
+  }
 })
 
 const noConfirm = await runClean('conversation_delete', { session_ids: ['old-a'] })
